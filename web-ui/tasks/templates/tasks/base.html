@@ -1,0 +1,107 @@
+{% load static %}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="E-commerce Agent 浏览器智能体任务工作台">
+    <title>{% block title %}E-commerce Agent{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'tasks/css/app.css' %}">
+    <script src="{% static 'tasks/js/app.js' %}" defer></script>
+</head>
+<body>
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
+
+    <div class="app-shell">
+        <aside class="sidebar" id="sidebar" aria-label="主导航">
+            <div class="brand">
+                <span class="brand-mark" aria-hidden="true">
+                    <span></span><span></span><span></span>
+                </span>
+                <span>
+                    <strong>E-commerce</strong>
+                    <small>Agent Console</small>
+                </span>
+            </div>
+
+            <nav class="nav-list">
+                <p class="nav-label">工作空间</p>
+                <a class="nav-item {% block nav_dashboard %}{% endblock %}" href="{% url 'tasks:dashboard' %}">
+                    <span class="nav-icon" aria-hidden="true">⌂</span>
+                    工作台
+                </a>
+                <a class="nav-item" href="{% url 'tasks:dashboard' %}#task-create">
+                    <span class="nav-icon" aria-hidden="true">＋</span>
+                    新建任务
+                </a>
+                <a class="nav-item {% block nav_tasks %}{% endblock %}" href="{% url 'tasks:dashboard' %}#recent-tasks">
+                    <span class="nav-icon" aria-hidden="true">◫</span>
+                    任务记录
+                    <span class="nav-count">6</span>
+                </a>
+
+                <p class="nav-label nav-label-spaced">系统</p>
+                <a class="nav-item" href="{% url 'tasks:dashboard' %}#system-status">
+                    <span class="nav-icon" aria-hidden="true">⌁</span>
+                    运行状态
+                </a>
+                <a class="nav-item" href="#settings" data-demo-action="设置功能将在后续版本开放">
+                    <span class="nav-icon" aria-hidden="true">⚙</span>
+                    系统设置
+                </a>
+            </nav>
+
+            <div class="sidebar-runtime">
+                <div class="runtime-title">
+                    <span class="status-dot status-dot-live"></span>
+                    本地开发环境
+                </div>
+                <p>UI Preview · 未连接 Worker</p>
+            </div>
+
+            <div class="profile-card">
+                <span class="avatar">KR</span>
+                <span class="profile-copy">
+                    <strong>管理员</strong>
+                    <small>本地工作区</small>
+                </span>
+                <span class="more" aria-hidden="true">•••</span>
+            </div>
+        </aside>
+
+        <div class="sidebar-backdrop" data-sidebar-close></div>
+
+        <main class="main-area" id="main-content">
+            <header class="topbar">
+                <button class="icon-button menu-button" type="button" data-sidebar-toggle aria-label="打开导航" aria-expanded="false">
+                    <span></span><span></span><span></span>
+                </button>
+                <div class="environment-chip">
+                    <span class="status-dot status-dot-warning"></span>
+                    演示环境
+                </div>
+                <div class="topbar-actions">
+                    <button class="icon-button" type="button" aria-label="搜索" data-demo-action="搜索功能将在后续版本开放">⌕</button>
+                    <button class="icon-button notification-button" type="button" aria-label="通知" data-demo-action="暂无新通知">
+                        ◌
+                        <span></span>
+                    </button>
+                    <a class="topbar-primary" href="{% url 'tasks:dashboard' %}#task-create">
+                        <span aria-hidden="true">＋</span>
+                        新建任务
+                    </a>
+                </div>
+            </header>
+
+            <div class="page-content">
+                {% block content %}{% endblock %}
+            </div>
+        </main>
+    </div>
+
+    <div class="toast" role="status" aria-live="polite" aria-hidden="true">
+        <span class="toast-icon">i</span>
+        <span class="toast-message">这是界面演示，功能将在后续版本接入。</span>
+    </div>
+</body>
+</html>

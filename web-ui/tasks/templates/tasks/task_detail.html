@@ -1,0 +1,182 @@
+{% extends "tasks/base.html" %}
+
+{% block title %}任务执行详情 · E-commerce Agent{% endblock %}
+{% block nav_tasks %}is-active{% endblock %}
+
+{% block content %}
+<nav class="breadcrumb" aria-label="面包屑">
+    <a href="{% url 'tasks:dashboard' %}">工作台</a>
+    <span>›</span>
+    <a href="{% url 'tasks:dashboard' %}#recent-tasks">任务记录</a>
+    <span>›</span>
+    <b>#BA-0726-034</b>
+</nav>
+
+<section class="detail-hero">
+    <div>
+        <div class="detail-titleline">
+            <span class="status-pill status-running"><i></i>执行中</span>
+            <span class="detail-id">#BA-0726-034</span>
+        </div>
+        <h1>任务执行详情</h1>
+        <p>采集达人广场美妆类目数据，并生成结构化筛选结果。</p>
+    </div>
+    <div class="detail-actions">
+        <button type="button" class="secondary-button" data-demo-action="当前为 UI 演示，暂不支持取消任务">取消任务</button>
+        <button type="button" class="create-button compact" data-demo-action="任务数据将在功能开发阶段支持刷新">
+            刷新进度
+            <span aria-hidden="true">↻</span>
+        </button>
+    </div>
+</section>
+
+<section class="detail-summary-grid">
+    <article class="panel progress-card">
+        <div class="progress-ring" style="--progress: 64">
+            <div><strong>64%</strong><span>总进度</span></div>
+        </div>
+        <div class="progress-copy">
+            <span class="section-kicker">CURRENT STEP</span>
+            <h2>正在提取页面数据</h2>
+            <p>已处理第 4 / 7 个步骤，当前正在读取列表中的达人卡片。</p>
+            <div class="wide-progress"><span style="width: 64%"></span></div>
+            <div class="progress-meta">
+                <span>开始于 14:28:02</span>
+                <span>已运行 4分16秒</span>
+            </div>
+        </div>
+    </article>
+
+    <article class="panel task-meta-card">
+        <span class="section-kicker">TASK PROFILE</span>
+        <h2>任务信息</h2>
+        <dl class="task-meta-list">
+            <div><dt>任务类型</dt><dd><span class="type-pill type-chrome">Chrome 采集</span></dd></div>
+            <div><dt>优先级</dt><dd>普通</dd></div>
+            <div><dt>执行环境</dt><dd>本地开发环境</dd></div>
+            <div><dt>最后更新</dt><dd>刚刚 · 14:32:18</dd></div>
+        </dl>
+    </article>
+</section>
+
+<div class="detail-grid">
+    <section class="panel steps-panel">
+        <div class="panel-heading">
+            <div>
+                <span class="section-kicker">EXECUTION PLAN</span>
+                <h2>执行步骤</h2>
+            </div>
+            <span class="steps-count">4 / 7</span>
+        </div>
+
+        <ol class="step-list">
+            <li class="step-complete">
+                <span class="step-marker">✓</span>
+                <div>
+                    <strong>初始化任务上下文</strong>
+                    <p>创建独立会话并载入任务参数</p>
+                    <small>14:28:02 · 320ms</small>
+                </div>
+                <span class="step-state">完成</span>
+            </li>
+            <li class="step-complete">
+                <span class="step-marker">✓</span>
+                <div>
+                    <strong>连接普通 Chrome</strong>
+                    <p>通过 Chrome Data MCP 建立 CDP 连接</p>
+                    <small>14:28:03 · 1.2s</small>
+                </div>
+                <span class="step-state">完成</span>
+            </li>
+            <li class="step-complete">
+                <span class="step-marker">✓</span>
+                <div>
+                    <strong>定位目标页面</strong>
+                    <p>确认达人广场标签页和页面状态</p>
+                    <small>14:28:05 · 840ms</small>
+                </div>
+                <span class="step-state">完成</span>
+            </li>
+            <li class="step-active">
+                <span class="step-marker"><i></i></span>
+                <div>
+                    <strong>提取页面数据</strong>
+                    <p>读取达人卡片并转换为结构化字段</p>
+                    <small>正在执行 · 已处理 64 条</small>
+                </div>
+                <span class="step-state">执行中</span>
+            </li>
+            <li>
+                <span class="step-marker">5</span>
+                <div>
+                    <strong>应用筛选规则</strong>
+                    <p>按类目和近 30 天销售额筛选</p>
+                </div>
+                <span class="step-state">等待</span>
+            </li>
+            <li>
+                <span class="step-marker">6</span>
+                <div>
+                    <strong>保存结构化结果</strong>
+                    <p>写入任务上下文和结果记录</p>
+                </div>
+                <span class="step-state">等待</span>
+            </li>
+            <li>
+                <span class="step-marker">7</span>
+                <div>
+                    <strong>释放任务资源</strong>
+                    <p>断开 CDP 并关闭独立任务会话</p>
+                </div>
+                <span class="step-state">等待</span>
+            </li>
+        </ol>
+    </section>
+
+    <section class="panel logs-panel">
+        <div class="panel-heading">
+            <div>
+                <span class="section-kicker">LIVE LOGS</span>
+                <h2>操作日志</h2>
+            </div>
+            <span class="live-label"><i></i> LIVE</span>
+        </div>
+        <div class="log-terminal" role="log" aria-label="任务操作日志">
+            <div><time>14:32:18.204</time><span class="log-module module-mcp">CHROME_MCP</span><b class="log-success">SUCCESS</b><p>完成第 4 页数据读取，共 16 条记录</p></div>
+            <div><time>14:32:17.861</time><span class="log-module module-cdp">CHROME_CDP</span><b class="log-success">SUCCESS</b><p>页面滚动完成，检测到新内容</p></div>
+            <div><time>14:32:16.425</time><span class="log-module module-mcp">CHROME_MCP</span><b class="log-started">STARTED</b><p>调用 chrome_extract_data</p></div>
+            <div><time>14:32:15.930</time><span class="log-module module-agent">DEEPSEEK</span><b class="log-success">SUCCESS</b><p>字段结构校验通过，继续读取下一页</p></div>
+            <div><time>14:32:14.702</time><span class="log-module module-worker">WORKER</span><b class="log-success">SUCCESS</b><p>进度已更新：completed_steps=3</p></div>
+            <div><time>14:32:13.118</time><span class="log-module module-mcp">CHROME_MCP</span><b class="log-success">SUCCESS</b><p>已获取 48 条达人卡片数据</p></div>
+            <div><time>14:32:11.806</time><span class="log-module module-cdp">CHROME_CDP</span><b class="log-started">STARTED</b><p>等待页面异步内容加载</p></div>
+            <div><time>14:32:10.219</time><span class="log-module module-system">SYSTEM</span><b class="log-success">SUCCESS</b><p>任务心跳正常</p></div>
+        </div>
+        <button type="button" class="log-footer-button" data-demo-action="完整日志将在功能开发阶段提供">查看完整日志 <span>↗</span></button>
+    </section>
+</div>
+
+<section class="panel result-panel">
+    <div class="panel-heading">
+        <div>
+            <span class="section-kicker">INTERMEDIATE RESULT</span>
+            <h2>中间结果预览</h2>
+        </div>
+        <span class="demo-tag">每 5 秒更新</span>
+    </div>
+    <div class="result-stats">
+        <div><strong>64</strong><span>已采集记录</span></div>
+        <div><strong>41</strong><span>符合基础条件</span></div>
+        <div><strong>4</strong><span>已完成页面</span></div>
+        <div><strong>0</strong><span>数据异常</span></div>
+    </div>
+    <div class="result-note">
+        <span>i</span>
+        <p><strong>结果仍在生成中</strong>任务完成后将在这里展示可下载的结构化数据和执行摘要。</p>
+    </div>
+</section>
+
+<footer class="page-footer">
+    <span><i></i> E-commerce Agent · UI Preview v0.1.0</span>
+    <a href="{% url 'tasks:dashboard' %}">返回工作台</a>
+</footer>
+{% endblock %}

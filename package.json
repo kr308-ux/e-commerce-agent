@@ -1,0 +1,9 @@
+{
+  "name": "e-commerce-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser Agent for e-commerce operations",
+  "engines": {
+    "node": ">=20"
+  }
+}
