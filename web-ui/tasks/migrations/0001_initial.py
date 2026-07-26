@@ -1,0 +1,150 @@
+# Generated for the initial persistent creator-acquisition workflow.
+
+import django.db.models.deletion
+import django.core.validators
+import uuid
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+    initial = True
+
+    dependencies = []
+
+    operations = [
+        migrations.CreateModel(
+            name="CreatorAcquisitionTask",
+            fields=[
+                ("id", models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ("name", models.CharField(default="获取达人数据", max_length=120)),
+                ("product_limit", models.PositiveSmallIntegerField(choices=[(10, "10 个商品"), (20, "20 个商品"), (30, "30 个商品"), (40, "40 个商品"), (50, "50 个商品"), (60, "60 个商品"), (70, "70 个商品"), (80, "80 个商品"), (90, "90 个商品"), (100, "100 个商品")], validators=[django.core.validators.MinValueValidator(10), django.core.validators.MaxValueValidator(100)])),
+                ("status", models.CharField(choices=[("PENDING", "等待中"), ("RUNNING", "执行中"), ("WAITING_CONFIRMATION", "等待登录"), ("SUCCESS", "已完成"), ("FAILED", "失败"), ("CANCELLED", "已取消")], db_index=True, default="PENDING", max_length=32)),
+                ("progress", models.PositiveSmallIntegerField(default=0)),
+                ("current_step", models.CharField(blank=True, max_length=160)),
+                ("error_code", models.CharField(blank=True, max_length=80)),
+                ("error_message", models.TextField(blank=True)),
+                ("opencode_session_id", models.CharField(blank=True, max_length=100)),
+                ("model_name", models.CharField(default="deepseek/deepseek-v4-flash", max_length=100)),
+                ("final_summary", models.TextField(blank=True)),
+                ("started_at", models.DateTimeField(blank=True, null=True)),
+                ("finished_at", models.DateTimeField(blank=True, null=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+            ],
+            options={"ordering": ["-created_at"]},
+        ),
+        migrations.CreateModel(
+            name="Product",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("external_product_id", models.CharField(max_length=40)),
+                ("name", models.TextField()),
+                ("product_url", models.URLField(max_length=500)),
+                ("country", models.CharField(blank=True, max_length=12)),
+                ("category", models.CharField(blank=True, max_length=160)),
+                ("total_sales", models.DecimalField(blank=True, decimal_places=2, max_digits=22, null=True)),
+                ("total_sales_raw", models.CharField(blank=True, max_length=80)),
+                ("recent_7_day_revenue", models.DecimalField(blank=True, decimal_places=2, max_digits=22, null=True)),
+                ("recent_7_day_revenue_raw", models.CharField(blank=True, max_length=80)),
+                ("total_revenue", models.DecimalField(blank=True, decimal_places=2, max_digits=22, null=True)),
+                ("total_revenue_raw", models.CharField(blank=True, max_length=80)),
+                ("related_creator_count", models.PositiveIntegerField(blank=True, null=True)),
+                ("related_creator_count_raw", models.CharField(blank=True, max_length=80)),
+                ("collected_at", models.DateTimeField(auto_now=True)),
+                ("task", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="products", to="tasks.creatoracquisitiontask")),
+            ],
+            options={"ordering": ["id"]},
+        ),
+        migrations.CreateModel(
+            name="TaskStep",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("step_id", models.CharField(max_length=160)),
+                ("sequence", models.PositiveIntegerField()),
+                ("operation", models.CharField(max_length=120)),
+                ("label", models.CharField(max_length=160)),
+                ("status", models.CharField(choices=[("RUNNING", "执行中"), ("SUCCESS", "成功"), ("FAILED", "失败")], max_length=16)),
+                ("input_summary", models.JSONField(blank=True, default=dict)),
+                ("output_summary", models.JSONField(blank=True, default=dict)),
+                ("error_code", models.CharField(blank=True, max_length=80)),
+                ("error_message", models.TextField(blank=True)),
+                ("started_at", models.DateTimeField(blank=True, null=True)),
+                ("finished_at", models.DateTimeField(blank=True, null=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("task", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="steps", to="tasks.creatoracquisitiontask")),
+            ],
+            options={"ordering": ["sequence"]},
+        ),
+        migrations.CreateModel(
+            name="CreatorExportArtifact",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("file_name", models.CharField(max_length=255)),
+                ("file_path", models.CharField(max_length=1000)),
+                ("sha256", models.CharField(max_length=64)),
+                ("requested_row_count", models.PositiveIntegerField(default=100)),
+                ("exported_row_count", models.PositiveIntegerField(default=0)),
+                ("imported_row_count", models.PositiveIntegerField(default=0)),
+                ("file_size_bytes", models.PositiveBigIntegerField(default=0)),
+                ("downloaded_at", models.DateTimeField(blank=True, null=True)),
+                ("imported_at", models.DateTimeField(auto_now_add=True)),
+                ("product", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="exports", to="tasks.product")),
+            ],
+            options={"ordering": ["-imported_at"]},
+        ),
+        migrations.CreateModel(
+            name="RelatedCreator",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("creator_handle", models.CharField(max_length=160)),
+                ("nickname", models.CharField(blank=True, max_length=255)),
+                ("tiktok_url", models.URLField(blank=True, max_length=500)),
+                ("creator_detail_url", models.URLField(blank=True, max_length=500)),
+                ("category", models.CharField(blank=True, max_length=160)),
+                ("country_code", models.CharField(blank=True, max_length=12)),
+                ("recent_7_day_revenue", models.DecimalField(blank=True, decimal_places=2, max_digits=22, null=True)),
+                ("recent_7_day_video_revenue", models.DecimalField(blank=True, decimal_places=2, max_digits=22, null=True)),
+                ("recent_7_day_live_revenue", models.DecimalField(blank=True, decimal_places=2, max_digits=22, null=True)),
+                ("recent_30_day_revenue", models.DecimalField(blank=True, decimal_places=2, max_digits=22, null=True)),
+                ("recent_30_day_video_revenue", models.DecimalField(blank=True, decimal_places=2, max_digits=22, null=True)),
+                ("recent_30_day_live_revenue", models.DecimalField(blank=True, decimal_places=2, max_digits=22, null=True)),
+                ("related_video_count", models.PositiveIntegerField(blank=True, null=True)),
+                ("related_live_count", models.PositiveIntegerField(blank=True, null=True)),
+                ("follower_count", models.DecimalField(blank=True, decimal_places=2, max_digits=22, null=True)),
+                ("average_views", models.DecimalField(blank=True, decimal_places=2, max_digits=22, null=True)),
+                ("total_views", models.DecimalField(blank=True, decimal_places=2, max_digits=22, null=True)),
+                ("average_likes", models.DecimalField(blank=True, decimal_places=2, max_digits=22, null=True)),
+                ("total_likes", models.DecimalField(blank=True, decimal_places=2, max_digits=22, null=True)),
+                ("engagement_rate", models.DecimalField(blank=True, decimal_places=4, max_digits=10, null=True)),
+                ("like_follower_ratio", models.DecimalField(blank=True, decimal_places=6, max_digits=18, null=True)),
+                ("email", models.EmailField(blank=True, max_length=320)),
+                ("x_url", models.URLField(blank=True, max_length=500)),
+                ("instagram_url", models.URLField(blank=True, max_length=500)),
+                ("youtube_url", models.URLField(blank=True, max_length=500)),
+                ("whatsapp_url", models.URLField(blank=True, max_length=500)),
+                ("linkedin_url", models.URLField(blank=True, max_length=500)),
+                ("telegram_url", models.URLField(blank=True, max_length=500)),
+                ("facebook_url", models.URLField(blank=True, max_length=500)),
+                ("raw_data", models.JSONField(blank=True, default=dict)),
+                ("collected_at", models.DateTimeField(auto_now=True)),
+                ("product", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="related_creators", to="tasks.product")),
+            ],
+            options={"ordering": ["product_id", "-recent_30_day_revenue", "creator_handle"]},
+        ),
+        migrations.AddConstraint(
+            model_name="product",
+            constraint=models.UniqueConstraint(fields=("task", "external_product_id"), name="unique_task_external_product"),
+        ),
+        migrations.AddConstraint(
+            model_name="taskstep",
+            constraint=models.UniqueConstraint(fields=("task", "step_id"), name="unique_task_step_id"),
+        ),
+        migrations.AddConstraint(
+            model_name="relatedcreator",
+            constraint=models.UniqueConstraint(fields=("product", "creator_handle"), name="unique_product_creator_handle"),
+        ),
+        migrations.AddConstraint(
+            model_name="creatorexportartifact",
+            constraint=models.UniqueConstraint(fields=("product", "sha256"), name="unique_product_export_sha256"),
+        ),
+    ]

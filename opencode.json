@@ -1,0 +1,43 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "deepseek/deepseek-v4-flash",
+  "provider": {
+    "deepseek": {
+      "options": {
+        "apiKey": "{env:DEEPSEEK_API_KEY}"
+      }
+    }
+  },
+  "mcp": {
+    "chrome-data": {
+      "type": "local",
+      "command": [
+        "node",
+        "data-acquisition/dist/index.js"
+      ],
+      "enabled": true,
+      "timeout": 90000,
+      "environment": {
+        "CHROME_CDP_URL": "http://127.0.0.1:9333",
+        "CHROME_TARGET_URL": "https://www.chuhaijiang.com/app/discover/tiktok/products?country=US",
+        "CHROME_OPERATION_TIMEOUT_MS": "15000",
+        "CHROME_DOWNLOAD_TIMEOUT_MS": "60000",
+        "LOGS_DIR": "logs/data-acquisition",
+        "EXPORTS_DIR": "storage/exports"
+      }
+    }
+  },
+  "instructions": [
+    "prompts/task-rules.md"
+  ],
+  "watcher": {
+    "ignore": [
+      "node_modules/**",
+      "dist/**",
+      "logs/**",
+      "storage/exports/**",
+      "temporary/**",
+      ".venv/**"
+    ]
+  }
+}
