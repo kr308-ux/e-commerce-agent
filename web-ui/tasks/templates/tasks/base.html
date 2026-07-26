@@ -7,6 +7,7 @@
     <meta name="description" content="E-commerce Agent 浏览器智能体任务工作台">
     <title>{% block title %}E-commerce Agent{% endblock %}</title>
     <link rel="stylesheet" href="{% static 'tasks/css/app.css' %}">
+    {% block extra_head %}{% endblock %}
     <script src="{% static 'tasks/js/app.js' %}" defer></script>
 </head>
 <body>
@@ -38,6 +39,10 @@
                     <span class="nav-icon" aria-hidden="true">◫</span>
                     任务记录
                     <span class="nav-count">{{ task_count|default:"0" }}</span>
+                </a>
+                <a class="nav-item {% block nav_creator_contact %}{% endblock %}" href="{% url 'creator_contact:dashboard' %}">
+                    <span class="nav-icon" aria-hidden="true">◎</span>
+                    达人联系
                 </a>
 
                 <p class="nav-label nav-label-spaced">系统</p>
@@ -78,7 +83,8 @@
                 </button>
                 <div class="environment-chip">
                     <span class="status-dot status-dot-warning"></span>
-                    本地运行环境
+                    <span>{% block topbar_title %}本地运行环境{% endblock %}</span>
+                    {% block topbar_subtitle %}{% endblock %}
                 </div>
                 <div class="topbar-actions">
                     <button class="icon-button" type="button" aria-label="搜索" data-demo-action="搜索功能将在后续版本开放">⌕</button>
@@ -86,10 +92,12 @@
                         ◌
                         <span></span>
                     </button>
+                    {% block topbar_primary %}
                     <a class="topbar-primary" href="{% url 'tasks:dashboard' %}#task-create">
                         <span aria-hidden="true">＋</span>
                         新建任务
                     </a>
+                    {% endblock %}
                 </div>
             </header>
 
@@ -101,7 +109,8 @@
 
     <div class="toast" role="status" aria-live="polite" aria-hidden="true">
         <span class="toast-icon">i</span>
-        <span class="toast-message">这是界面演示，功能将在后续版本接入。</span>
+        <span class="toast-message">操作完成。</span>
     </div>
+    {% block extra_js %}{% endblock %}
 </body>
 </html>

@@ -23,6 +23,7 @@ ALLOWED_HOSTS = [
 INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "tasks.apps.TasksConfig",
+    "creator_contact.apps.CreatorContactConfig",
 ]
 
 MIDDLEWARE = [
@@ -74,6 +75,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek/deepseek-v4-flash")
 OPENCODE_BINARY = os.getenv("OPENCODE_BINARY", "opencode")
 TASK_TIMEOUT_SECONDS = int(os.getenv("TASK_TIMEOUT_SECONDS", "1800"))
+ZINIAO_CONTACT_STORE_ID = os.getenv("ZINIAO_CONTACT_STORE_ID", "").strip()
 exports_setting = Path(os.getenv("EXPORTS_DIR", "storage/exports"))
 if not exports_setting.is_absolute():
     exports_setting = PROJECT_ROOT / exports_setting

@@ -25,10 +25,19 @@
         "LOGS_DIR": "logs/data-acquisition",
         "EXPORTS_DIR": "storage/exports"
       }
+    },
+    "ziniao-contact": {
+      "type": "local",
+      "command": [
+        "./scripts/start-ziniao-contact-mcp-macos.sh"
+      ],
+      "enabled": true,
+      "timeout": 180000
     }
   },
   "instructions": [
-    "prompts/task-rules.md"
+    "prompts/task-rules.md",
+    "prompts/ziniao-contact-rules.md"
   ],
   "watcher": {
     "ignore": [

@@ -1,0 +1,261 @@
+{% extends "tasks/base.html" %}
+{% load static %}
+
+{% block title %}{{ contact_task.name }} · 达人联系{% endblock %}
+{% block nav_creator_contact %}is-active{% endblock %}
+{% block topbar_title %}达人联系任务{% endblock %}
+{% block topbar_subtitle %}<small class="contact-topbar-subtitle">逐步验收</small>{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'creator_contact/contact.css' %}">
+{% endblock %}
+{% block topbar_primary %}
+<a class="topbar-primary" href="{% url 'creator_contact:dashboard' %}#contact-task-create">
+    <span aria-hidden="true">＋</span>
+    新建联系任务
+</a>
+{% endblock %}
+
+{% block content %}
+<div
+    data-contact-task-monitor
+    data-status="{{ contact_task.status }}"
+    data-status-url="{% url 'creator_contact:task_status' contact_task.id %}"
+>
+    <nav class="breadcrumb" aria-label="面包屑">
+        <a href="{% url 'creator_contact:dashboard' %}">达人联系</a>
+        <span>›</span>
+        <b>#{{ contact_task.id|stringformat:"s"|slice:":8" }}</b>
+    </nav>
+
+    <section class="detail-hero">
+        <div>
+            <div class="detail-titleline">
+                <span class="status-pill status-{{ contact_task.status|lower }}">
+                    <i></i>{{ contact_task.get_status_display|default:contact_task.status }}
+                </span>
+                <span class="detail-id">#{{ contact_task.id }}</span>
+            </div>
+            <h1>{{ contact_task.name|default:"联系达人" }}</h1>
+            <p>
+                目标 {{ contact_task.top_n }} 位达人 · 店铺 {{ contact_task.store_id }} ·
+                创建于 {{ contact_task.created_at|date:"Y-m-d H:i:s" }}
+            </p>
+        </div>
+        <div class="detail-actions">
+            <a class="secondary-button" href="{% url 'creator_contact:dashboard' %}">返回达人联系</a>
+            <button type="button" class="create-button compact" data-refresh-page>刷新进度 ↻</button>
+        </div>
+    </section>
+
+    {% if contact_task.error_message %}
+    <div class="alert-card {% if contact_task.status == 'PARTIAL_SUCCESS' %}alert-warning{% else %}alert-error{% endif %}" role="alert">
+        <strong>{{ contact_task.error_code|default:"任务提示" }}</strong>
+        <span>{{ contact_task.error_message }}</span>
+    </div>
+    {% endif %}
+
+    <section class="contact-detail-config" aria-label="任务配置快照">
+        <article class="contact-config-card">
+            <span>Source product</span>
+            <strong>{{ contact_task.source_product.name|truncatechars:72 }}</strong>
+            <small>ID {{ contact_task.source_product.external_product_id }}</small>
+        </article>
+        <article class="contact-config-card">
+            <span>Greeting</span>
+            <strong>{{ contact_task.greeting_template.name|default:"任务招呼语快照" }}</strong>
+            <small>SHA-256 {{ contact_task.greeting_sha256|slice:":12" }}…</small>
+        </article>
+        <article class="contact-config-card">
+            <span>Collaboration</span>
+            <strong>{{ contact_task.invitation_name_snapshot }}</strong>
+            <small>ID {{ contact_task.invitation_id_snapshot|default:"—" }}</small>
+        </article>
+        <article class="contact-config-card">
+            <span>Execution</span>
+            <strong>{{ contact_task.model_name }}</strong>
+            <small>{{ targets|length }} 位已冻结目标达人</small>
+        </article>
+    </section>
+
+    <section class="detail-summary-grid">
+        <article class="panel progress-card">
+            <div class="progress-ring" style="--progress: {{ contact_task.progress|default:'0' }}">
+                <div>
+                    <strong>{{ contact_task.progress|default:"0" }}%</strong>
+                    <span>总进度</span>
+                </div>
+            </div>
+            <div class="progress-copy">
+                <span class="section-kicker">CURRENT STEP</span>
+                <h2>{{ contact_task.current_step|default:"等待达人联系 Worker" }}</h2>
+                <p>
+                    每位达人均独立核验聊天对象、招呼语、定向合作邀请和最终卡片发送结果。
+                </p>
+                <div class="wide-progress">
+                    <span style="width: {{ contact_task.progress|default:'0' }}%"></span>
+                </div>
+                <div class="progress-meta">
+                    <span>{{ contact_task.started_at|date:"m-d H:i:s"|default:"尚未开始" }}</span>
+                    <span>{{ contact_task.finished_at|date:"m-d H:i:s"|default:"执行中" }}</span>
+                </div>
+            </div>
+        </article>
+
+        <article class="panel task-meta-card">
+            <span class="section-kicker">TARGET RESULT</span>
+            <h2>达人执行概览</h2>
+            <dl class="task-meta-list">
+                <div>
+                    <dt>目标</dt>
+                    <dd>
+                        {% if contact_task.final_summary.targetCount != None %}
+                            {{ contact_task.final_summary.targetCount }}
+                        {% else %}
+                            {{ targets|length }}
+                        {% endif %}
+                    </dd>
+                </div>
+                <div><dt>成功</dt><dd>{{ contact_task.final_summary.successCount|default:"0" }}</dd></div>
+                <div><dt>失败</dt><dd>{{ contact_task.final_summary.failedCount|default:"0" }}</dd></div>
+                <div><dt>跳过</dt><dd>{{ contact_task.final_summary.skippedCount|default:"0" }}</dd></div>
+                <div><dt>OpenCode Session</dt><dd class="mono-small">{{ contact_task.opencode_session_id|default:"—" }}</dd></div>
+            </dl>
+        </article>
+    </section>
+
+    <section class="panel result-panel">
+        <div class="panel-heading">
+            <div>
+                <span class="section-kicker">FROZEN TARGETS</span>
+                <h2>目标达人执行状态</h2>
+            </div>
+            <span class="steps-count">{{ targets|length }}</span>
+        </div>
+        <div class="table-wrap">
+            <table class="data-table contact-target-table">
+                <thead>
+                    <tr>
+                        <th>排名</th>
+                        <th>达人</th>
+                        <th>近 7 天销售额</th>
+                        <th>近 30 天销售额</th>
+                        <th>聊天 creator_id</th>
+                        <th>发送验收</th>
+                        <th>当前步骤</th>
+                        <th>状态</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for target in targets %}
+                    <tr>
+                        <td><span class="candidate-rank">{{ target.rank }}</span></td>
+                        <td>
+                            <strong>{{ target.nickname_snapshot|default:target.creator_handle_snapshot }}</strong>
+                            <small class="block-muted">@{{ target.normalized_handle }}</small>
+                        </td>
+                        <td>
+                            {% if target.recent_7_day_revenue_snapshot != None %}
+                                ${{ target.recent_7_day_revenue_snapshot }}
+                            {% else %}—{% endif %}
+                        </td>
+                        <td>
+                            {% if target.recent_30_day_revenue_snapshot != None %}
+                                <strong>${{ target.recent_30_day_revenue_snapshot }}</strong>
+                            {% else %}—{% endif %}
+                        </td>
+                        <td class="mono-small">{{ target.chat_creator_id|default:"执行时发现" }}</td>
+                        <td>
+                            <div class="target-delivery-state">
+                                <span class="{% if target.message_sent %}is-complete{% endif %}">招呼语</span>
+                                <span class="{% if target.invitation_created %}is-complete{% endif %}">邀请</span>
+                                <span class="{% if target.target_plan_message_verified %}is-complete{% endif %}">合作消息</span>
+                                <span class="{% if target.card_sent %}is-complete{% endif %}">卡片</span>
+                                <span class="{% if target.final_send_verified %}is-complete{% endif %}">最终验收</span>
+                            </div>
+                            {% if target.actual_invitation_id %}
+                            <small class="block-muted">邀请 ID {{ target.actual_invitation_id }}</small>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {{ target.current_step|default:"等待执行" }}
+                            {% if target.error_message %}
+                            <small class="target-error">{{ target.error_code }} · {{ target.error_message }}</small>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="status-pill status-{{ target.status|lower }}">
+                                <i></i>{{ target.get_status_display|default:target.status }}
+                            </span>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="8" class="empty-cell">目标达人尚未冻结，请等待 Worker 领取任务。</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <div class="detail-grid">
+        <section class="panel steps-panel">
+            <div class="panel-heading">
+                <div>
+                    <span class="section-kicker">MESSAGE SNAPSHOT</span>
+                    <h2>本任务招呼语</h2>
+                </div>
+                <span class="steps-count">{{ contact_task.greeting_snapshot|length }} 字符</span>
+            </div>
+            <pre class="contact-greeting-snapshot">{{ contact_task.greeting_snapshot }}</pre>
+        </section>
+
+        <section class="panel steps-panel">
+            <div class="panel-heading">
+                <div>
+                    <span class="section-kicker">VERIFICATION STEPS</span>
+                    <h2>逐步验收记录</h2>
+                </div>
+                <span class="steps-count">{{ steps|length }}</span>
+            </div>
+            <ol class="step-list compact-steps">
+                {% for step in steps %}
+                <li class="{% if step.status == 'SUCCESS' %}step-complete{% elif step.status == 'FAILED' %}step-failed{% else %}step-active{% endif %}">
+                    <span class="step-marker">
+                        {% if step.status == 'SUCCESS' %}✓{% elif step.status == 'FAILED' %}!{% else %}<i></i>{% endif %}
+                    </span>
+                    <div>
+                        <strong>{{ step.label }}</strong>
+                        <p>
+                            {% if step.target %}@{{ step.target.normalized_handle }} · {% endif %}
+                            {{ step.step_id }}
+                            {% if step.error_message %} · {{ step.error_message }}{% endif %}
+                        </p>
+                        <small>{{ step.finished_at|date:"H:i:s"|default:"执行中" }}</small>
+                    </div>
+                    <span class="step-state">{{ step.get_status_display|default:step.status }}</span>
+                </li>
+                {% empty %}
+                <li>
+                    <span class="step-marker">1</span>
+                    <div>
+                        <strong>等待 Worker 领取任务</strong>
+                        <p>任务步骤将在每次 MCP 调用验收后写入数据库。</p>
+                    </div>
+                    <span class="step-state">等待</span>
+                </li>
+                {% endfor %}
+            </ol>
+        </section>
+    </div>
+
+    <footer class="page-footer">
+        <span><i></i> E-commerce Agent · Creator Outreach</span>
+        <span>任务配置已冻结 · 成功后按店铺写入联系记录</span>
+    </footer>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'creator_contact/contact.js' %}" defer></script>
+{% endblock %}

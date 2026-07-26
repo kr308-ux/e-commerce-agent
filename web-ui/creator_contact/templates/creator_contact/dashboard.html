@@ -1,0 +1,504 @@
+{% extends "tasks/base.html" %}
+{% load static %}
+
+{% block title %}达人联系 · E-commerce Agent{% endblock %}
+{% block nav_creator_contact %}is-active{% endblock %}
+{% block topbar_title %}达人联系{% endblock %}
+{% block topbar_subtitle %}<small class="contact-topbar-subtitle">配置与执行</small>{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'creator_contact/contact.css' %}">
+{% endblock %}
+{% block topbar_primary %}
+<a class="topbar-primary" href="#contact-task-create">
+    <span aria-hidden="true">＋</span>
+    创建联系任务
+</a>
+{% endblock %}
+
+{% block content %}
+<section class="welcome-row contact-welcome">
+    <div>
+        <p class="eyebrow">CREATOR OUTREACH</p>
+        <h1>达人联系</h1>
+        <p class="welcome-copy">
+            从已采集商品中选择高销售额达人，使用已保存的招呼语和店铺定向合作方案创建联系任务。
+        </p>
+    </div>
+    <div class="contact-store-card" aria-label="当前店铺">
+        <span class="contact-store-icon" aria-hidden="true">Z</span>
+        <span>
+            <small>当前紫鸟店铺</small>
+            <strong>{{ store_id|default:"尚未选择" }}</strong>
+        </span>
+    </div>
+</section>
+
+<section class="contact-metrics" aria-label="达人联系概览">
+    <article class="contact-metric">
+        <span>招呼语模板</span>
+        <strong>{{ greeting_templates|length|stringformat:"02d" }}</strong>
+        <small>可复用并随时更新</small>
+    </article>
+    <article class="contact-metric">
+        <span>进行中合作</span>
+        <strong>{{ collaboration_options|length|stringformat:"02d" }}</strong>
+        <small>来自当前店铺</small>
+    </article>
+    <article class="contact-metric">
+        <span>可用采集任务</span>
+        <strong>{{ source_tasks|length|stringformat:"02d" }}</strong>
+        <small>仅展示成功入库的数据</small>
+    </article>
+    <article class="contact-metric contact-metric-dark">
+        <span>最近联系任务</span>
+        <strong>{{ latest_contact_tasks|length|stringformat:"02d" }}</strong>
+        <small>逐达人保留验收记录</small>
+    </article>
+</section>
+
+{% if form.non_field_errors %}
+<div class="alert-card alert-error" role="alert">
+    <strong>配置未通过校验</strong>
+    <span>{{ form.non_field_errors|join:"；" }}</span>
+</div>
+{% endif %}
+
+<form
+    class="contact-wizard"
+    id="contact-task-create"
+    method="post"
+    action="{% url 'creator_contact:dashboard' %}"
+    data-contact-task-form
+    data-candidates-url="{% url 'creator_contact:candidates' %}"
+>
+    {% csrf_token %}
+    <input type="hidden" name="action" value="create_task">
+
+    <section class="panel contact-step" aria-labelledby="contact-step-store">
+        <div class="contact-step-heading">
+            <span class="contact-step-number">1</span>
+            <div>
+                <span class="section-kicker">STORE &amp; COLLABORATION</span>
+                <h2 id="contact-step-store">选择店铺与定向合作</h2>
+                <p>先同步该店铺“进行中”的定向合作，再选择本次要发送的合作方案。</p>
+            </div>
+            <span class="contact-step-state">
+                {% if collaboration_options %}{{ collaboration_options|length }} 个可用{% else %}等待同步{% endif %}
+            </span>
+        </div>
+
+        <div class="contact-field-grid">
+            <div class="contact-field">
+                <label>
+                    紫鸟店铺 ID
+                    <small>联系记录按店铺隔离</small>
+                </label>
+                {{ form.store_id }}
+                <div class="contact-readonly-value">{{ store_id|default:"尚未配置店铺" }}</div>
+                {% if form.store_id.errors %}<p class="form-error">{{ form.store_id.errors|join:"；" }}</p>{% endif %}
+            </div>
+            <div class="contact-field">
+                <label for="{{ form.collaboration_option.id_for_label }}">
+                    {{ form.collaboration_option.label|default:"定向合作选项" }}
+                    <small>仅使用当前同步结果</small>
+                </label>
+                {{ form.collaboration_option }}
+                {% if form.collaboration_option.errors %}<p class="form-error">{{ form.collaboration_option.errors|join:"；" }}</p>{% endif %}
+            </div>
+        </div>
+
+        <div class="contact-sync-row">
+            <div>
+                <span class="status-dot {% if collaboration_options %}status-dot-live{% else %}status-dot-warning{% endif %}"></span>
+                <span>
+                    <strong>同步状态</strong>
+                    <small>
+                        {% if sync_status %}
+                            {{ sync_status.get_status_display|default:sync_status.status }}
+                            {% if sync_status.error_message %} · {{ sync_status.error_message }}{% endif %}
+                        {% else %}
+                            尚未同步当前店铺的定向合作
+                        {% endif %}
+                    </small>
+                </span>
+            </div>
+            <button
+                class="secondary-button contact-sync-button"
+                type="submit"
+                name="action"
+                value="sync_collaborations"
+                formaction="{% url 'creator_contact:sync_collaborations' %}"
+                formnovalidate
+            >
+                同步进行中合作 ↻
+            </button>
+        </div>
+
+        {% if collaboration_options %}
+        <div class="collaboration-strip" aria-label="已同步的定向合作">
+            {% for option in collaboration_options %}
+            <article>
+                <span class="collaboration-mark" aria-hidden="true">✓</span>
+                <span>
+                    <strong>{{ option.name }}</strong>
+                    <small>
+                        {% if option.external_invitation_id %}ID {{ option.external_invitation_id }} · {% endif %}
+                        {{ option.product_count|default_if_none:"—" }} 个商品
+                    </small>
+                </span>
+            </article>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </section>
+
+    <section class="panel contact-step" aria-labelledby="contact-step-greeting">
+        <div class="contact-step-heading">
+            <span class="contact-step-number">2</span>
+            <div>
+                <span class="section-kicker">GREETING TEMPLATE</span>
+                <h2 id="contact-step-greeting">设置并保存招呼语</h2>
+                <p>任务创建时会保存消息快照；之后修改模板不会改变已排队任务。</p>
+            </div>
+            <span class="contact-step-state">{{ greeting_templates|length }} 个模板</span>
+        </div>
+
+        <div class="greeting-layout">
+            <div class="contact-field greeting-selector">
+                <label for="{{ form.greeting_template.id_for_label }}">
+                    {{ form.greeting_template.label|default:"选择已保存模板" }}
+                    <small>选择后可在右侧编辑并另存</small>
+                </label>
+                {{ form.greeting_template }}
+                {% if form.greeting_template.errors %}<p class="form-error">{{ form.greeting_template.errors|join:"；" }}</p>{% endif %}
+
+                <div class="saved-greetings" aria-label="招呼语模板列表">
+                    {% for template in greeting_templates %}
+                    <article>
+                        <span class="saved-greeting-icon" aria-hidden="true">✦</span>
+                        <span>
+                            <strong>{{ template.name }}</strong>
+                            <small>
+                                {{ template.updated_at|date:"m-d H:i"|default:"已保存" }}
+                                {% if template.is_default %} · 默认{% endif %}
+                            </small>
+                        </span>
+                    </article>
+                    <template
+                        data-greeting-template-record
+                        data-template-id="{{ template.pk }}"
+                        data-template-name="{{ template.name }}"
+                        data-template-default="{{ template.is_default|yesno:'true,false' }}"
+                    >{{ template.message|default:template.content }}</template>
+                    {% empty %}
+                    <p class="contact-empty-copy">还没有模板，请在右侧保存第一条招呼语。</p>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="greeting-editor">
+                <div class="contact-field">
+                    <label for="{{ greeting_form.name.id_for_label }}">
+                        {{ greeting_form.name.label|default:"模板名称" }}
+                        <small>用于下次快速识别</small>
+                    </label>
+                    {{ greeting_form.name }}
+                    {% if greeting_form.name.errors %}<p class="form-error">{{ greeting_form.name.errors|join:"；" }}</p>{% endif %}
+                </div>
+                <div class="contact-field prompt-field">
+                    <label for="{{ greeting_form.content.id_for_label }}">
+                        {{ greeting_form.content.label|default:"招呼语内容" }}
+                        <small><span data-greeting-count>0</span> / 2000</small>
+                    </label>
+                    {{ greeting_form.content }}
+                    {% if greeting_form.content.errors %}<p class="form-error">{{ greeting_form.content.errors|join:"；" }}</p>{% endif %}
+                </div>
+                <div class="greeting-actions">
+                    <label class="greeting-default-option" for="{{ greeting_form.is_default.id_for_label }}">
+                        {{ greeting_form.is_default }}
+                        <span>设为默认招呼语</span>
+                    </label>
+                    <button
+                        class="secondary-button"
+                        type="submit"
+                        name="action"
+                        value="save_greeting"
+                        formnovalidate
+                    >
+                        保存招呼语
+                    </button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel contact-step" aria-labelledby="contact-step-targets">
+        <div class="contact-step-heading">
+            <span class="contact-step-number">3</span>
+            <div>
+                <span class="section-kicker">PRODUCT &amp; CREATORS</span>
+                <h2 id="contact-step-targets">选择商品与高销售额达人</h2>
+                <p>先排除当前店铺已联系达人，再按近 30 天销售额从高到低选取前 N 名。</p>
+            </div>
+            <span class="contact-step-state" data-candidate-summary>
+                {{ candidate_preview|length }} 位待联系
+            </span>
+        </div>
+
+        <div class="contact-field-grid contact-field-grid-three">
+            <div class="contact-field">
+                <label for="id_source_task">
+                    达人数据采集任务
+                    <small>默认使用最近成功任务</small>
+                </label>
+                <select id="id_source_task" data-source-task-select>
+                    <option value="">请选择成功的采集任务</option>
+                    {% for source_task in source_tasks %}
+                    <option
+                        value="{{ source_task.pk }}"
+                        {% if forloop.first %}selected{% endif %}
+                    >
+                        #{{ source_task.pk|stringformat:"s"|slice:":8" }} ·
+                        {{ source_task.created_at|date:"m-d H:i" }} ·
+                        {{ source_task.product_count|default:source_task.products.count }} 个商品
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="contact-field">
+                <label for="id_source_product">
+                    {{ form.source_product.label|default:"关联商品" }}
+                    <small>按采集页面原始顺序</small>
+                </label>
+                <select id="id_source_product" name="source_product" data-product-select required>
+                    <option value="">请选择商品</option>
+                    {% regroup products by task as product_task_groups %}
+                    {% for product_group in product_task_groups %}
+                    <optgroup label="#{{ product_group.grouper.pk|stringformat:'s'|slice:':8' }} · {{ product_group.grouper.created_at|date:'m-d H:i' }}">
+                        {% for product in product_group.list %}
+                        <option
+                            value="{{ product.pk }}"
+                            data-source-task="{{ product.task_id }}"
+                            data-product-label="{{ product.name }}"
+                            {% if form.source_product.value|stringformat:"s" == product.pk|stringformat:"s" %}selected{% endif %}
+                        >
+                            第 {{ forloop.counter }} 个 · {{ product.name|truncatechars:64 }}
+                        </option>
+                        {% endfor %}
+                    </optgroup>
+                    {% endfor %}
+                </select>
+                {% if form.source_product.errors %}<p class="form-error">{{ form.source_product.errors|join:"；" }}</p>{% endif %}
+            </div>
+
+            <div class="contact-field">
+                <label for="{{ form.top_n.id_for_label }}">
+                    {{ form.top_n.label|default:"联系人数" }}
+                    <small>从未联系达人中选取</small>
+                </label>
+                {{ form.top_n }}
+                {% if form.top_n.errors %}<p class="form-error">{{ form.top_n.errors|join:"；" }}</p>{% endif %}
+            </div>
+        </div>
+
+        <div class="candidate-preview" data-candidate-preview aria-live="polite">
+            <div class="candidate-preview-heading">
+                <div>
+                    <strong>候选达人预览</strong>
+                    <small>销售额相同则按用户名稳定排序</small>
+                </div>
+                <div>
+                    <span class="candidate-excluded">
+                        已排除 <b data-excluded-count>{{ excluded_count|default:"0" }}</b> 位已联系达人
+                    </span>
+                    <span class="candidate-fetch-state" data-candidate-fetch-state>预览已更新</span>
+                </div>
+            </div>
+            <div class="table-wrap">
+                <table class="data-table candidate-table">
+                    <thead>
+                        <tr>
+                            <th>排名</th>
+                            <th>达人</th>
+                            <th>近 7 天销售额</th>
+                            <th>近 30 天销售额</th>
+                            <th>关联视频</th>
+                            <th>状态</th>
+                        </tr>
+                    </thead>
+                    <tbody data-candidate-body>
+                        {% for candidate in candidate_preview %}
+                        <tr>
+                            <td><span class="candidate-rank">{{ candidate.rank|default:forloop.counter }}</span></td>
+                            <td>
+                                <strong>{{ candidate.nickname|default:candidate.creator_handle }}</strong>
+                                <small class="block-muted">@{{ candidate.creator_handle }}</small>
+                            </td>
+                            <td>
+                                {% if candidate.recent_7_day_revenue != None %}
+                                    ${{ candidate.recent_7_day_revenue }}
+                                {% else %}—{% endif %}
+                            </td>
+                            <td>
+                                {% if candidate.recent_30_day_revenue != None %}
+                                    <strong>${{ candidate.recent_30_day_revenue }}</strong>
+                                {% else %}—{% endif %}
+                            </td>
+                            <td>{{ candidate.related_video_count|default_if_none:"—" }}</td>
+                            <td><span class="candidate-ready"><i></i>待联系</span></td>
+                        </tr>
+                        {% empty %}
+                        <tr data-candidate-empty>
+                            <td colspan="6" class="empty-cell">选择采集任务、商品和人数后预览候选达人。</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel contact-step contact-confirm-step" aria-labelledby="contact-step-confirm">
+        <div class="contact-step-heading">
+            <span class="contact-step-number">4</span>
+            <div>
+                <span class="section-kicker">REVIEW &amp; CREATE</span>
+                <h2 id="contact-step-confirm">确认并创建联系任务</h2>
+                <p>Worker 将逐位核验聊天对象、发送招呼语和定向合作卡片；任一步失败都会停止该达人流程并记录证据。</p>
+            </div>
+            <span class="contact-step-state">最终确认</span>
+        </div>
+
+        <div class="execution-summary">
+            <div>
+                <span aria-hidden="true">✓</span>
+                <p><strong>自动跳过已联系达人</strong><small>按店铺与规范化 @handle 去重</small></p>
+            </div>
+            <div>
+                <span aria-hidden="true">✓</span>
+                <p><strong>逐步校验发送结果</strong><small>刷新复核合作卡片后才标记成功</small></p>
+            </div>
+            <div>
+                <span aria-hidden="true">✓</span>
+                <p><strong>消息与合作均保存快照</strong><small>任务执行期间配置不会漂移</small></p>
+            </div>
+        </div>
+
+        <label class="execution-confirm execution-confirm-all">
+            <input type="checkbox" data-confirm-all>
+            <span>
+                <strong>确认全部远端发送操作</strong>
+                <small>勾选后会同时确认下列三个独立安全门；也可逐项确认。</small>
+            </span>
+        </label>
+        <div class="execution-confirm-grid">
+            <label class="execution-confirm" for="{{ form.confirm_send_greeting.id_for_label }}">
+                {{ form.confirm_send_greeting }}
+                <span>
+                    <strong>{{ form.confirm_send_greeting.label }}</strong>
+                    <small>向每位候选达人真实发送所选招呼语。</small>
+                </span>
+            </label>
+            <label class="execution-confirm" for="{{ form.confirm_send_invitation.id_for_label }}">
+                {{ form.confirm_send_invitation }}
+                <span>
+                    <strong>{{ form.confirm_send_invitation.label }}</strong>
+                    <small>选择并创建指定的定向合作邀请。</small>
+                </span>
+            </label>
+            <label class="execution-confirm" for="{{ form.confirm_send_card.id_for_label }}">
+                {{ form.confirm_send_card }}
+                <span>
+                    <strong>{{ form.confirm_send_card.label }}</strong>
+                    <small>刷新复核后点击合作卡片“发送”。</small>
+                </span>
+            </label>
+        </div>
+        {% if form.confirm_send_greeting.errors %}<p class="form-error">{{ form.confirm_send_greeting.errors|join:"；" }}</p>{% endif %}
+        {% if form.confirm_send_invitation.errors %}<p class="form-error">{{ form.confirm_send_invitation.errors|join:"；" }}</p>{% endif %}
+        {% if form.confirm_send_card.errors %}<p class="form-error">{{ form.confirm_send_card.errors|join:"；" }}</p>{% endif %}
+
+        <div class="contact-submit-row">
+            <p>
+                <span class="status-dot status-dot-live"></span>
+                独立 Agent Worker 执行 · Django 请求仅创建任务
+            </p>
+            <button class="create-button contact-create-button" type="submit" data-create-contact-task>
+                创建联系任务 <span aria-hidden="true">→</span>
+            </button>
+        </div>
+    </section>
+</form>
+
+<section class="panel task-table-panel contact-history" aria-labelledby="recent-contact-tasks">
+    <div class="panel-heading table-heading">
+        <div>
+            <span class="section-kicker">RECENT OUTREACH TASKS</span>
+            <h2 id="recent-contact-tasks">最近联系任务</h2>
+        </div>
+    </div>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>任务</th>
+                    <th>商品</th>
+                    <th>目标达人</th>
+                    <th>状态</th>
+                    <th>进度</th>
+                    <th>创建时间</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for contact_task in latest_contact_tasks %}
+                <tr>
+                    <td>
+                        <a class="task-name" href="{% url 'creator_contact:task_detail' contact_task.id %}">
+                            <span class="task-id">#{{ contact_task.id|stringformat:"s"|slice:":8" }}</span>
+                            <strong>{{ contact_task.name|default:"联系达人" }}</strong>
+                        </a>
+                    </td>
+                    <td>{{ contact_task.source_product.name|truncatechars:42 }}</td>
+                    <td>{{ contact_task.targets.count|default:contact_task.top_n }} 位</td>
+                    <td>
+                        <span class="status-pill status-{{ contact_task.status|lower }}">
+                            <i></i>{{ contact_task.get_status_display|default:contact_task.status }}
+                        </span>
+                    </td>
+                    <td>
+                        <div class="table-progress">
+                            <span style="width: {{ contact_task.progress|default:'0' }}%"></span>
+                            <b>{{ contact_task.progress|default:"0" }}%</b>
+                        </div>
+                    </td>
+                    <td>
+                        <span class="time-cell">
+                            {{ contact_task.created_at|timesince }}前
+                            <small>{{ contact_task.created_at|date:"m-d H:i:s" }}</small>
+                        </span>
+                    </td>
+                    <td>
+                        <a class="row-arrow" href="{% url 'creator_contact:task_detail' contact_task.id %}" aria-label="查看联系任务">→</a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" class="empty-cell">还没有达人联系任务。完成上方配置后创建第一条任务。</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<footer class="page-footer">
+    <span><i></i> E-commerce Agent · Creator Outreach</span>
+    <span>按店铺去重 · 逐达人验收 · 失败可追踪</span>
+</footer>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'creator_contact/contact.js' %}" defer></script>
+{% endblock %}
