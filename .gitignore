@@ -13,6 +13,7 @@ htmlcov/
 
 # Django / project runtime
 storage/agent.db
+storage/exports/
 logs/
 screenshots/
 temporary/

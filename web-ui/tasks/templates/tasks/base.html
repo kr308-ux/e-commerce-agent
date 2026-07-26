@@ -37,7 +37,7 @@
                 <a class="nav-item {% block nav_tasks %}{% endblock %}" href="{% url 'tasks:dashboard' %}#recent-tasks">
                     <span class="nav-icon" aria-hidden="true">◫</span>
                     任务记录
-                    <span class="nav-count">6</span>
+                    <span class="nav-count">{{ task_count|default:"0" }}</span>
                 </a>
 
                 <p class="nav-label nav-label-spaced">系统</p>
@@ -56,7 +56,7 @@
                     <span class="status-dot status-dot-live"></span>
                     本地开发环境
                 </div>
-                <p>UI Preview · 未连接 Worker</p>
+                <p>Django + Agent Worker</p>
             </div>
 
             <div class="profile-card">
@@ -78,7 +78,7 @@
                 </button>
                 <div class="environment-chip">
                     <span class="status-dot status-dot-warning"></span>
-                    演示环境
+                    本地运行环境
                 </div>
                 <div class="topbar-actions">
                     <button class="icon-button" type="button" aria-label="搜索" data-demo-action="搜索功能将在后续版本开放">⌕</button>

@@ -1,182 +1,109 @@
 {% extends "tasks/base.html" %}
 
-{% block title %}任务执行详情 · E-commerce Agent{% endblock %}
+{% block title %}{{ task.name }} · E-commerce Agent{% endblock %}
 {% block nav_tasks %}is-active{% endblock %}
 
 {% block content %}
-<nav class="breadcrumb" aria-label="面包屑">
-    <a href="{% url 'tasks:dashboard' %}">工作台</a>
-    <span>›</span>
-    <a href="{% url 'tasks:dashboard' %}#recent-tasks">任务记录</a>
-    <span>›</span>
-    <b>#BA-0726-034</b>
-</nav>
+<div data-task-monitor data-status="{{ task.status }}" data-status-url="{% url 'tasks:task-status' task.id %}">
+<nav class="breadcrumb" aria-label="面包屑"><a href="{% url 'tasks:dashboard' %}">工作台</a><span>›</span><b>#{{ task.id|stringformat:"s"|slice:":8" }}</b></nav>
 
 <section class="detail-hero">
     <div>
-        <div class="detail-titleline">
-            <span class="status-pill status-running"><i></i>执行中</span>
-            <span class="detail-id">#BA-0726-034</span>
-        </div>
-        <h1>任务执行详情</h1>
-        <p>采集达人广场美妆类目数据，并生成结构化筛选结果。</p>
+        <div class="detail-titleline"><span class="status-pill status-{{ task.status|lower }}"><i></i>{{ task.get_status_display }}</span><span class="detail-id">#{{ task.id }}</span></div>
+        <h1>{{ task.name }}</h1>
+        <p>目标 {{ task.product_limit }} 个商品 · {{ task.model_name }} · 创建于 {{ task.created_at|date:"Y-m-d H:i:s" }}</p>
     </div>
     <div class="detail-actions">
-        <button type="button" class="secondary-button" data-demo-action="当前为 UI 演示，暂不支持取消任务">取消任务</button>
-        <button type="button" class="create-button compact" data-demo-action="任务数据将在功能开发阶段支持刷新">
-            刷新进度
-            <span aria-hidden="true">↻</span>
-        </button>
+        <a class="secondary-button" href="{% url 'tasks:dashboard' %}">返回工作台</a>
+        {% if task.status == 'WAITING_CONFIRMATION' or task.status == 'FAILED' %}
+        <form method="post" action="{% url 'tasks:task-retry' task.id %}">
+            {% csrf_token %}
+            <button type="submit" class="secondary-button">重新加入队列</button>
+        </form>
+        {% endif %}
+        <button type="button" class="create-button compact" data-refresh-page>刷新进度 ↻</button>
     </div>
 </section>
 
+{% if task.error_message %}
+<div class="alert-card {% if task.status == 'WAITING_CONFIRMATION' %}alert-warning{% else %}alert-error{% endif %}">
+    <strong>{{ task.error_code|default:"任务提示" }}</strong>
+    <span>{{ task.error_message }}</span>
+</div>
+{% endif %}
+
 <section class="detail-summary-grid">
     <article class="panel progress-card">
-        <div class="progress-ring" style="--progress: 64">
-            <div><strong>64%</strong><span>总进度</span></div>
-        </div>
+        <div class="progress-ring" style="--progress: {{ task.progress }}"><div><strong>{{ task.progress }}%</strong><span>总进度</span></div></div>
         <div class="progress-copy">
-            <span class="section-kicker">CURRENT STEP</span>
-            <h2>正在提取页面数据</h2>
-            <p>已处理第 4 / 7 个步骤，当前正在读取列表中的达人卡片。</p>
-            <div class="wide-progress"><span style="width: 64%"></span></div>
-            <div class="progress-meta">
-                <span>开始于 14:28:02</span>
-                <span>已运行 4分16秒</span>
-            </div>
+            <span class="section-kicker">CURRENT STEP</span><h2>{{ task.current_step|default:"等待 Agent Worker" }}</h2>
+            <p>已记录 {{ task.steps.count }} 个 MCP 步骤；页面会在任务执行期间自动刷新。</p>
+            <div class="wide-progress"><span style="width: {{ task.progress }}%"></span></div>
         </div>
     </article>
-
     <article class="panel task-meta-card">
-        <span class="section-kicker">TASK PROFILE</span>
-        <h2>任务信息</h2>
+        <span class="section-kicker">PERSISTED RESULT</span><h2>入库概览</h2>
         <dl class="task-meta-list">
-            <div><dt>任务类型</dt><dd><span class="type-pill type-chrome">Chrome 采集</span></dd></div>
-            <div><dt>优先级</dt><dd>普通</dd></div>
-            <div><dt>执行环境</dt><dd>本地开发环境</dd></div>
-            <div><dt>最后更新</dt><dd>刚刚 · 14:32:18</dd></div>
+            <div><dt>商品</dt><dd>{{ product_count }} / {{ task.product_limit }}</dd></div>
+            <div><dt>关联达人</dt><dd>{{ creator_count }}</dd></div>
+            <div><dt>导出文件</dt><dd>{{ export_count }}</dd></div>
+            <div><dt>OpenCode Session</dt><dd class="mono-small">{{ task.opencode_session_id|default:"—" }}</dd></div>
         </dl>
     </article>
 </section>
 
-<div class="detail-grid">
-    <section class="panel steps-panel">
-        <div class="panel-heading">
-            <div>
-                <span class="section-kicker">EXECUTION PLAN</span>
-                <h2>执行步骤</h2>
-            </div>
-            <span class="steps-count">4 / 7</span>
-        </div>
-
-        <ol class="step-list">
-            <li class="step-complete">
-                <span class="step-marker">✓</span>
-                <div>
-                    <strong>初始化任务上下文</strong>
-                    <p>创建独立会话并载入任务参数</p>
-                    <small>14:28:02 · 320ms</small>
-                </div>
-                <span class="step-state">完成</span>
-            </li>
-            <li class="step-complete">
-                <span class="step-marker">✓</span>
-                <div>
-                    <strong>连接普通 Chrome</strong>
-                    <p>通过 Chrome Data MCP 建立 CDP 连接</p>
-                    <small>14:28:03 · 1.2s</small>
-                </div>
-                <span class="step-state">完成</span>
-            </li>
-            <li class="step-complete">
-                <span class="step-marker">✓</span>
-                <div>
-                    <strong>定位目标页面</strong>
-                    <p>确认达人广场标签页和页面状态</p>
-                    <small>14:28:05 · 840ms</small>
-                </div>
-                <span class="step-state">完成</span>
-            </li>
-            <li class="step-active">
-                <span class="step-marker"><i></i></span>
-                <div>
-                    <strong>提取页面数据</strong>
-                    <p>读取达人卡片并转换为结构化字段</p>
-                    <small>正在执行 · 已处理 64 条</small>
-                </div>
-                <span class="step-state">执行中</span>
-            </li>
-            <li>
-                <span class="step-marker">5</span>
-                <div>
-                    <strong>应用筛选规则</strong>
-                    <p>按类目和近 30 天销售额筛选</p>
-                </div>
-                <span class="step-state">等待</span>
-            </li>
-            <li>
-                <span class="step-marker">6</span>
-                <div>
-                    <strong>保存结构化结果</strong>
-                    <p>写入任务上下文和结果记录</p>
-                </div>
-                <span class="step-state">等待</span>
-            </li>
-            <li>
-                <span class="step-marker">7</span>
-                <div>
-                    <strong>释放任务资源</strong>
-                    <p>断开 CDP 并关闭独立任务会话</p>
-                </div>
-                <span class="step-state">等待</span>
-            </li>
-        </ol>
-    </section>
-
-    <section class="panel logs-panel">
-        <div class="panel-heading">
-            <div>
-                <span class="section-kicker">LIVE LOGS</span>
-                <h2>操作日志</h2>
-            </div>
-            <span class="live-label"><i></i> LIVE</span>
-        </div>
-        <div class="log-terminal" role="log" aria-label="任务操作日志">
-            <div><time>14:32:18.204</time><span class="log-module module-mcp">CHROME_MCP</span><b class="log-success">SUCCESS</b><p>完成第 4 页数据读取，共 16 条记录</p></div>
-            <div><time>14:32:17.861</time><span class="log-module module-cdp">CHROME_CDP</span><b class="log-success">SUCCESS</b><p>页面滚动完成，检测到新内容</p></div>
-            <div><time>14:32:16.425</time><span class="log-module module-mcp">CHROME_MCP</span><b class="log-started">STARTED</b><p>调用 chrome_extract_data</p></div>
-            <div><time>14:32:15.930</time><span class="log-module module-agent">DEEPSEEK</span><b class="log-success">SUCCESS</b><p>字段结构校验通过，继续读取下一页</p></div>
-            <div><time>14:32:14.702</time><span class="log-module module-worker">WORKER</span><b class="log-success">SUCCESS</b><p>进度已更新：completed_steps=3</p></div>
-            <div><time>14:32:13.118</time><span class="log-module module-mcp">CHROME_MCP</span><b class="log-success">SUCCESS</b><p>已获取 48 条达人卡片数据</p></div>
-            <div><time>14:32:11.806</time><span class="log-module module-cdp">CHROME_CDP</span><b class="log-started">STARTED</b><p>等待页面异步内容加载</p></div>
-            <div><time>14:32:10.219</time><span class="log-module module-system">SYSTEM</span><b class="log-success">SUCCESS</b><p>任务心跳正常</p></div>
-        </div>
-        <button type="button" class="log-footer-button" data-demo-action="完整日志将在功能开发阶段提供">查看完整日志 <span>↗</span></button>
-    </section>
-</div>
+<section class="panel steps-panel">
+    <div class="panel-heading"><div><span class="section-kicker">MCP EXECUTION</span><h2>逐步验收记录</h2></div><span class="steps-count">{{ task.steps.count }}</span></div>
+    <ol class="step-list compact-steps">
+    {% for step in task.steps.all %}
+        <li class="{% if step.status == 'SUCCESS' %}step-complete{% elif step.status == 'FAILED' %}step-failed{% else %}step-active{% endif %}">
+            <span class="step-marker">{% if step.status == 'SUCCESS' %}✓{% elif step.status == 'FAILED' %}!{% else %}<i></i>{% endif %}</span>
+            <div><strong>{{ step.label }}</strong><p>{{ step.step_id }}{% if step.error_message %} · {{ step.error_message }}{% endif %}</p><small>{{ step.finished_at|date:"H:i:s" }}</small></div>
+            <span class="step-state">{{ step.get_status_display }}</span>
+        </li>
+    {% empty %}
+        <li><span class="step-marker">1</span><div><strong>等待 Worker 领取任务</strong><p>运行 python web-ui/manage.py run_creator_worker</p></div><span class="step-state">等待</span></li>
+    {% endfor %}
+    </ol>
+</section>
 
 <section class="panel result-panel">
-    <div class="panel-heading">
-        <div>
-            <span class="section-kicker">INTERMEDIATE RESULT</span>
-            <h2>中间结果预览</h2>
-        </div>
-        <span class="demo-tag">每 5 秒更新</span>
-    </div>
-    <div class="result-stats">
-        <div><strong>64</strong><span>已采集记录</span></div>
-        <div><strong>41</strong><span>符合基础条件</span></div>
-        <div><strong>4</strong><span>已完成页面</span></div>
-        <div><strong>0</strong><span>数据异常</span></div>
-    </div>
-    <div class="result-note">
-        <span>i</span>
-        <p><strong>结果仍在生成中</strong>任务完成后将在这里展示可下载的结构化数据和执行摘要。</p>
+    <div class="panel-heading"><div><span class="section-kicker">PRODUCTS</span><h2>商品信息</h2></div><span class="steps-count">{{ product_count }}</span></div>
+    <div class="table-wrap">
+        <table class="data-table"><thead><tr><th>商品名称</th><th>总销量</th><th>近 7 天销售额</th><th>总销售额</th><th>关联达人数</th><th>已导入达人</th></tr></thead>
+        <tbody>
+        {% for product in products %}
+            <tr>
+                <td><a class="external-link" href="{{ product.product_url }}" target="_blank" rel="noreferrer">{{ product.name|truncatechars:72 }}</a><small class="block-muted">{{ product.external_product_id }}</small></td>
+                <td>{{ product.total_sales_raw|default:"—" }}</td>
+                <td>{{ product.recent_7_day_revenue_raw|default:"—" }}</td>
+                <td>{{ product.total_revenue_raw|default:"—" }}</td>
+                <td>{{ product.related_creator_count|default_if_none:"—" }}</td>
+                <td>{{ product.related_creators.count }}</td>
+            </tr>
+        {% empty %}<tr><td colspan="6" class="empty-cell">商品尚未入库。</td></tr>{% endfor %}
+        </tbody></table>
     </div>
 </section>
 
-<footer class="page-footer">
-    <span><i></i> E-commerce Agent · UI Preview v0.1.0</span>
-    <a href="{% url 'tasks:dashboard' %}">返回工作台</a>
-</footer>
+<section class="panel result-panel">
+    <div class="panel-heading"><div><span class="section-kicker">RELATED CREATORS</span><h2>关联达人信息</h2></div><span class="steps-count">{{ creator_count }}（展示前 200）</span></div>
+    <div class="table-wrap">
+        <table class="data-table"><thead><tr><th>商品</th><th>达人</th><th>近 7 天销售额</th><th>近 30 天销售额</th><th>粉丝数</th><th>关联视频</th><th>邮箱</th></tr></thead>
+        <tbody>
+        {% for creator in creators %}
+            <tr>
+                <td>{{ creator.product.name|truncatechars:28 }}</td>
+                <td>{% if creator.tiktok_url %}<a class="external-link" href="{{ creator.tiktok_url }}" target="_blank" rel="noreferrer">{{ creator.nickname|default:creator.creator_handle }}</a>{% else %}{{ creator.nickname|default:creator.creator_handle }}{% endif %}<small class="block-muted">@{{ creator.creator_handle }}</small></td>
+                <td>{% if creator.recent_7_day_revenue != None %}${{ creator.recent_7_day_revenue }}{% else %}—{% endif %}</td>
+                <td>{% if creator.recent_30_day_revenue != None %}${{ creator.recent_30_day_revenue }}{% else %}—{% endif %}</td>
+                <td>{{ creator.follower_count|default_if_none:"—" }}</td>
+                <td>{{ creator.related_video_count|default_if_none:"—" }}</td>
+                <td>{{ creator.email|default:"—" }}</td>
+            </tr>
+        {% empty %}<tr><td colspan="7" class="empty-cell">达人导出文件尚未导入。</td></tr>{% endfor %}
+        </tbody></table>
+    </div>
+</section>
+</div>
 {% endblock %}

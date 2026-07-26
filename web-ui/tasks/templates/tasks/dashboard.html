@@ -1,281 +1,121 @@
 {% extends "tasks/base.html" %}
 
-{% block title %}工作台 · E-commerce Agent{% endblock %}
+{% block title %}获取达人数据 · E-commerce Agent{% endblock %}
 {% block nav_dashboard %}is-active{% endblock %}
 
 {% block content %}
 <section class="welcome-row">
     <div>
-        <p class="eyebrow">BROWSER AUTOMATION CENTER</p>
-        <h1>让浏览器替你完成重复工作</h1>
-        <p class="welcome-copy">创建并跟踪 Chrome 数据采集、紫鸟店铺操作和组合自动化任务。</p>
+        <p class="eyebrow">CREATOR DATA ACQUISITION</p>
+        <h1>获取达人数据</h1>
+        <p class="welcome-copy">由 DeepSeek 通过 Chrome MCP 采集商品，并导出、解析每个商品的关联达人数据。</p>
     </div>
     <div class="date-card">
-        <span class="date-day">26</span>
-        <span>
-            <strong>星期日</strong>
-            <small>2026年7月</small>
-        </span>
+        <span class="date-day">{{ now|date:"d" }}</span>
+        <span><strong>{{ now|date:"l" }}</strong><small>{{ now|date:"Y年n月" }}</small></span>
     </div>
 </section>
 
 <section class="metric-grid" aria-label="任务概览">
     <article class="metric-card metric-dark">
-        <div class="metric-topline">
-            <span>今日任务</span>
-            <span class="metric-icon">↗</span>
-        </div>
-        <strong class="metric-value">34</strong>
-        <p><span class="trend-up">+12.5%</span> 较昨日</p>
-        <div class="metric-spark" aria-hidden="true">
-            <i style="height: 28%"></i><i style="height: 44%"></i><i style="height: 36%"></i>
-            <i style="height: 58%"></i><i style="height: 52%"></i><i style="height: 72%"></i>
-            <i style="height: 86%"></i><i class="spark-current" style="height: 68%"></i>
-        </div>
+        <div class="metric-topline"><span>今日任务</span><span class="metric-icon">↗</span></div>
+        <strong class="metric-value">{{ today_count|stringformat:"02d" }}</strong>
+        <p>所有数据来自本地任务数据库</p>
     </article>
     <article class="metric-card">
-        <div class="metric-topline">
-            <span>执行中</span>
-            <span class="metric-badge metric-badge-blue">RUNNING</span>
-        </div>
-        <strong class="metric-value">02</strong>
-        <p>平均耗时 <b>4分32秒</b></p>
-        <div class="mini-progress"><span style="width: 68%"></span></div>
+        <div class="metric-topline"><span>执行中</span><span class="metric-badge metric-badge-blue">RUNNING</span></div>
+        <strong class="metric-value">{{ running_count|stringformat:"02d" }}</strong>
+        <p>由独立 Agent Worker 执行</p>
     </article>
     <article class="metric-card">
-        <div class="metric-topline">
-            <span>等待队列</span>
-            <span class="metric-badge metric-badge-amber">PENDING</span>
-        </div>
-        <strong class="metric-value">04</strong>
-        <p>预计等待 <b>约 6 分钟</b></p>
-        <div class="queue-dots" aria-hidden="true">
-            <span></span><span></span><span></span><span></span><span class="is-empty"></span>
-        </div>
+        <div class="metric-topline"><span>等待队列</span><span class="metric-badge metric-badge-amber">PENDING</span></div>
+        <strong class="metric-value">{{ pending_count|stringformat:"02d" }}</strong>
+        <p>按创建时间依次处理</p>
     </article>
     <article class="metric-card">
-        <div class="metric-topline">
-            <span>今日成功率</span>
-            <span class="metric-icon metric-icon-light">✓</span>
-        </div>
-        <strong class="metric-value">94.1<small>%</small></strong>
-        <p><span class="trend-up">稳定</span> 32 / 34 个任务</p>
-        <div class="success-bar"><span></span><span></span><span></span><span></span><i></i></div>
+        <div class="metric-topline"><span>完成任务</span><span class="metric-icon metric-icon-light">✓</span></div>
+        <strong class="metric-value">{{ success_count|stringformat:"02d" }}</strong>
+        <p>商品与达人均已入库</p>
     </article>
 </section>
 
 <div class="dashboard-grid">
     <section class="panel create-panel" id="task-create">
         <div class="panel-heading">
-            <div>
-                <span class="section-kicker">QUICK START</span>
-                <h2>创建一个新任务</h2>
-            </div>
-            <span class="demo-tag">UI 演示</span>
+            <div><span class="section-kicker">NEW TASK</span><h2>创建获取达人数据任务</h2></div>
+            <span class="demo-tag">LIVE</span>
         </div>
-
-        <form class="task-form" data-demo-form>
-            <fieldset>
-                <legend>选择任务类型</legend>
-                <div class="task-type-grid">
-                    <label class="task-type-card is-selected">
-                        <input type="radio" name="task_type" value="chrome" checked>
-                        <span class="task-type-icon chrome-icon">C</span>
-                        <span>
-                            <strong>Chrome 数据采集</strong>
-                            <small>从普通浏览器获取网页结构化数据</small>
-                        </span>
-                        <i class="radio-mark"></i>
-                    </label>
-                    <label class="task-type-card">
-                        <input type="radio" name="task_type" value="ziniao">
-                        <span class="task-type-icon ziniao-icon">Z</span>
-                        <span>
-                            <strong>紫鸟店铺操作</strong>
-                            <small>在指定店铺页面完成标准操作</small>
-                        </span>
-                        <i class="radio-mark"></i>
-                    </label>
-                    <label class="task-type-card">
-                        <input type="radio" name="task_type" value="combined">
-                        <span class="task-type-icon combined-icon">∞</span>
-                        <span>
-                            <strong>组合自动化</strong>
-                            <small>串联采集、判断与店铺操作</small>
-                        </span>
-                        <i class="radio-mark"></i>
-                    </label>
-                </div>
-            </fieldset>
-
-            <label class="field-label" for="task-instruction">
-                任务指令
-                <span>用自然语言描述希望浏览器完成的工作</span>
-            </label>
-            <div class="prompt-field">
-                <textarea id="task-instruction" name="instruction" rows="4" placeholder="例如：打开当前 Chrome 中的达人广场，采集最近 30 天销售额超过 10 万的美妆达人…"></textarea>
-                <button type="button" class="sample-button" data-fill-sample>填入示例</button>
+        <form class="task-form" method="post">
+            {% csrf_token %}
+            <div class="task-type-card is-selected creator-task-card">
+                <span class="task-type-icon chrome-icon">C</span>
+                <span><strong>Chrome 商品关联达人采集</strong><small>运动与户外 → 运动服饰 → 商品详情 → 导出 100 条达人</small></span>
+                <i class="radio-mark"></i>
             </div>
 
+            <label class="field-label" for="{{ form.product_limit.id_for_label }}">
+                {{ form.product_limit.label }}
+                <span>数量必须是 10 的倍数，范围 10–100</span>
+            </label>
+            {{ form.product_limit }}
+            {% if form.product_limit.errors %}
+                <div class="form-error">{{ form.product_limit.errors|join:"；" }}</div>
+            {% endif %}
+            <p class="field-help">{{ form.product_limit.help_text }}</p>
+
+            <div class="workflow-preview">
+                <span>1</span>采集商品
+                <i>→</i><span>2</span>打开详情
+                <i>→</i><span>3</span>导出达人
+                <i>→</i><span>4</span>写入数据库
+            </div>
             <div class="form-footer">
-                <p><span class="status-dot status-dot-warning"></span> 当前为界面预览，不会连接浏览器</p>
-                <button class="create-button" type="submit">
-                    创建演示任务
-                    <span aria-hidden="true">→</span>
-                </button>
+                <p><span class="status-dot status-dot-live"></span> DeepSeek V4 Flash · Chrome Data MCP</p>
+                <button class="create-button" type="submit">创建任务 <span>→</span></button>
             </div>
         </form>
     </section>
 
     <aside class="panel runtime-panel" id="system-status">
         <div class="panel-heading">
-            <div>
-                <span class="section-kicker">RUNTIME</span>
-                <h2>智能体运行栈</h2>
-            </div>
-            <span class="panel-menu" aria-hidden="true">•••</span>
+            <div><span class="section-kicker">RUNTIME</span><h2>执行边界</h2></div>
         </div>
-
         <div class="runtime-stack">
-            <div class="runtime-item">
-                <span class="runtime-logo logo-opencode">OC</span>
-                <span class="runtime-copy">
-                    <strong>OpenCode</strong>
-                    <small>智能体会话容器</small>
-                </span>
-                <span class="runtime-state state-muted">待接入</span>
-            </div>
+            <div class="runtime-item"><span class="runtime-logo logo-opencode">OC</span><span class="runtime-copy"><strong>OpenCode</strong><small>Agent Runtime</small></span><span class="runtime-state state-live">READY</span></div>
             <div class="runtime-connector"></div>
-            <div class="runtime-item">
-                <span class="runtime-logo logo-deepseek">DS</span>
-                <span class="runtime-copy">
-                    <strong>DeepSeek</strong>
-                    <small>任务理解与规划</small>
-                </span>
-                <span class="runtime-state state-muted">待配置</span>
-            </div>
+            <div class="runtime-item"><span class="runtime-logo logo-deepseek">DS</span><span class="runtime-copy"><strong>DeepSeek</strong><small>规划并调用 MCP</small></span><span class="runtime-state state-live">CONFIGURED</span></div>
             <div class="runtime-connector"></div>
-            <div class="runtime-item runtime-item-split">
-                <span class="runtime-logo logo-mcp">M</span>
-                <span class="runtime-copy">
-                    <strong>Browser MCP</strong>
-                    <small>独立浏览器能力层</small>
-                </span>
-                <span class="runtime-state state-muted">未运行</span>
-            </div>
+            <div class="runtime-item"><span class="runtime-logo logo-mcp">M</span><span class="runtime-copy"><strong>Chrome Data MCP</strong><small>CDP、点击、导出</small></span><span class="runtime-state state-live">CONFIGURED</span></div>
         </div>
-
-        <div class="module-status">
-            <div>
-                <span class="module-dot module-dot-chrome"></span>
-                <span><strong>Chrome Data</strong><small>普通浏览器</small></span>
-                <i>OFF</i>
-            </div>
-            <div>
-                <span class="module-dot module-dot-ziniao"></span>
-                <span><strong>Ziniao Automation</strong><small>店铺浏览器</small></span>
-                <i>OFF</i>
-            </div>
-        </div>
-
-        <a class="text-link" href="#settings" data-demo-action="运行配置将在功能开发阶段开放">
-            查看运行配置 <span>→</span>
-        </a>
+        <p class="runtime-note">Django HTTP 只创建任务和展示结果；浏览器操作在独立 Worker 进程中完成。</p>
     </aside>
 </div>
 
 <section class="panel task-table-panel" id="recent-tasks">
     <div class="panel-heading table-heading">
-        <div>
-            <span class="section-kicker">RECENT ACTIVITY</span>
-            <h2>最近任务</h2>
-        </div>
-        <div class="table-actions">
-            <button type="button" data-demo-action="筛选功能将在后续版本开放">筛选 <span>⌄</span></button>
-            <a href="{% url 'tasks:task-detail' %}">查看演示详情 <span>→</span></a>
-        </div>
+        <div><span class="section-kicker">RECENT TASKS</span><h2>获取达人数据记录</h2></div>
     </div>
-
     <div class="table-wrap">
         <table>
-            <thead>
-                <tr>
-                    <th>任务</th>
-                    <th>类型</th>
-                    <th>状态</th>
-                    <th>进度</th>
-                    <th>更新时间</th>
-                    <th><span class="sr-only">操作</span></th>
-                </tr>
-            </thead>
+            <thead><tr><th>任务</th><th>商品目标</th><th>状态</th><th>进度</th><th>结果</th><th>更新时间</th><th></th></tr></thead>
             <tbody>
+            {% for task in recent_tasks %}
                 <tr>
-                    <td>
-                        <a class="task-name" href="{% url 'tasks:task-detail' %}">
-                            <span class="task-id">#BA-0726-034</span>
-                            <strong>采集达人广场美妆类目数据</strong>
-                        </a>
-                    </td>
-                    <td><span class="type-pill type-chrome">Chrome 采集</span></td>
-                    <td><span class="status-pill status-running"><i></i>执行中</span></td>
-                    <td>
-                        <div class="table-progress"><span style="width: 64%"></span><b>64%</b></div>
-                    </td>
-                    <td><span class="time-cell">刚刚<small>14:32:18</small></span></td>
-                    <td><a class="row-arrow" href="{% url 'tasks:task-detail' %}" aria-label="查看任务">→</a></td>
+                    <td><a class="task-name" href="{% url 'tasks:task-detail' task.id %}"><span class="task-id">#{{ task.id|stringformat:"s"|slice:":8" }}</span><strong>{{ task.name }}</strong></a></td>
+                    <td>{{ task.product_limit }} 个</td>
+                    <td><span class="status-pill status-{{ task.status|lower }}"><i></i>{{ task.get_status_display }}</span></td>
+                    <td><div class="table-progress"><span style="width: {{ task.progress }}%"></span><b>{{ task.progress }}%</b></div></td>
+                    <td>{{ task.product_count }} 商品 / {{ task.creator_count }} 达人</td>
+                    <td><span class="time-cell">{{ task.updated_at|timesince }}前<small>{{ task.updated_at|date:"m-d H:i:s" }}</small></span></td>
+                    <td><a class="row-arrow" href="{% url 'tasks:task-detail' task.id %}" aria-label="查看任务">→</a></td>
                 </tr>
-                <tr>
-                    <td>
-                        <a class="task-name" href="{% url 'tasks:task-detail' %}">
-                            <span class="task-id">#BA-0726-033</span>
-                            <strong>同步店铺商品页面信息</strong>
-                        </a>
-                    </td>
-                    <td><span class="type-pill type-ziniao">紫鸟操作</span></td>
-                    <td><span class="status-pill status-pending"><i></i>等待中</span></td>
-                    <td>
-                        <div class="table-progress progress-pending"><span style="width: 8%"></span><b>8%</b></div>
-                    </td>
-                    <td><span class="time-cell">3 分钟前<small>14:29:07</small></span></td>
-                    <td><a class="row-arrow" href="{% url 'tasks:task-detail' %}" aria-label="查看任务">→</a></td>
-                </tr>
-                <tr>
-                    <td>
-                        <a class="task-name" href="{% url 'tasks:task-detail' %}">
-                            <span class="task-id">#BA-0726-032</span>
-                            <strong>筛选目标达人并生成联系清单</strong>
-                        </a>
-                    </td>
-                    <td><span class="type-pill type-combined">组合自动化</span></td>
-                    <td><span class="status-pill status-success"><i></i>已完成</span></td>
-                    <td>
-                        <div class="table-progress progress-success"><span style="width: 100%"></span><b>100%</b></div>
-                    </td>
-                    <td><span class="time-cell">28 分钟前<small>14:04:52</small></span></td>
-                    <td><a class="row-arrow" href="{% url 'tasks:task-detail' %}" aria-label="查看任务">→</a></td>
-                </tr>
-                <tr>
-                    <td>
-                        <a class="task-name" href="{% url 'tasks:task-detail' %}">
-                            <span class="task-id">#BA-0726-031</span>
-                            <strong>提取竞品详情页价格与销量</strong>
-                        </a>
-                    </td>
-                    <td><span class="type-pill type-chrome">Chrome 采集</span></td>
-                    <td><span class="status-pill status-failed"><i></i>失败</span></td>
-                    <td>
-                        <div class="table-progress progress-failed"><span style="width: 42%"></span><b>42%</b></div>
-                    </td>
-                    <td><span class="time-cell">1 小时前<small>13:18:41</small></span></td>
-                    <td><a class="row-arrow" href="{% url 'tasks:task-detail' %}" aria-label="查看任务">→</a></td>
-                </tr>
+            {% empty %}
+                <tr><td colspan="7" class="empty-cell">还没有任务。先创建一个 10 个商品的采集任务。</td></tr>
+            {% endfor %}
             </tbody>
         </table>
     </div>
 </section>
 
-<footer class="page-footer">
-    <span><i></i> E-commerce Agent · UI Preview v0.1.0</span>
-    <span>所有任务数据均为演示内容</span>
-</footer>
+<footer class="page-footer"><span><i></i> E-commerce Agent · Creator Data</span><span>本地 SQLite · 敏感配置不写入日志</span></footer>
 {% endblock %}

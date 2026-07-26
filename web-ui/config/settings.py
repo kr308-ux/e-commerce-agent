@@ -22,7 +22,7 @@ ALLOWED_HOSTS = [
 
 INSTALLED_APPS = [
     "django.contrib.staticfiles",
-    "tasks",
+    "tasks.apps.TasksConfig",
 ]
 
 MIDDLEWARE = [
@@ -70,3 +70,11 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek/deepseek-v4-flash")
+OPENCODE_BINARY = os.getenv("OPENCODE_BINARY", "opencode")
+TASK_TIMEOUT_SECONDS = int(os.getenv("TASK_TIMEOUT_SECONDS", "1800"))
+exports_setting = Path(os.getenv("EXPORTS_DIR", "storage/exports"))
+if not exports_setting.is_absolute():
+    exports_setting = PROJECT_ROOT / exports_setting
+EXPORTS_ROOT = exports_setting.resolve()
