@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 from unittest.mock import Mock, patch
 
+from selenium.common.exceptions import StaleElementReferenceException
+
 from ziniao_automation.actions.creator_contact import (
     APPROVED_GREETING_MESSAGE,
     CreatorContactWorkflow,
@@ -12,6 +14,146 @@ from ziniao_automation.errors import ZiniaoWorkflowError
 
 
 class CreatorContactWorkflowTests(unittest.TestCase):
+    def test_every_click_waits_random_three_to_five_seconds(self) -> None:
+        driver = Mock()
+        element = Mock()
+        workflow = CreatorContactWorkflow(driver)
+
+        with (
+            patch(
+                "ziniao_automation.actions.creator_contact.random.uniform",
+                return_value=4.25,
+            ) as uniform,
+            patch(
+                "ziniao_automation.actions.creator_contact.time.sleep"
+            ) as sleep,
+        ):
+            workflow._click(element)
+
+        uniform.assert_called_once_with(3.0, 5.0)
+        sleep.assert_called_once_with(4.25)
+        element.click.assert_called_once_with()
+        self.assertEqual(workflow._action_wait_seconds, [4.25])
+
+    def test_every_refresh_waits_random_five_to_eight_seconds(self) -> None:
+        driver = Mock()
+        workflow = CreatorContactWorkflow(driver)
+        workflow._wait_for_document = Mock()
+
+        with (
+            patch(
+                "ziniao_automation.actions.creator_contact.random.uniform",
+                return_value=6.75,
+            ) as uniform,
+            patch(
+                "ziniao_automation.actions.creator_contact.time.sleep"
+            ) as sleep,
+        ):
+            waited = workflow._refresh_page()
+
+        self.assertEqual(waited, 6.75)
+        uniform.assert_called_once_with(5.0, 8.0)
+        sleep.assert_called_once_with(6.75)
+        driver.refresh.assert_called_once_with()
+        workflow._wait_for_document.assert_called_once_with()
+        self.assertEqual(workflow._refresh_wait_seconds, [6.75])
+
+    def test_click_refinds_same_unique_target_after_react_redraw(
+        self,
+    ) -> None:
+        driver = Mock()
+        stale = Mock()
+        stale.tag_name = "button"
+        stale.text = "联盟"
+        stale.get_attribute.side_effect = lambda name: (
+            "affiliate-entry" if name == "data-e2e" else ""
+        )
+        stale.is_enabled.side_effect = StaleElementReferenceException()
+        fresh = Mock()
+        fresh.id = "fresh-affiliate-entry"
+        fresh.is_displayed.return_value = True
+        fresh.is_enabled.return_value = True
+        driver.find_elements.return_value = [fresh]
+        workflow = CreatorContactWorkflow(driver)
+
+        with patch.object(workflow, "_random_pause", return_value=4.0):
+            workflow._click(stale)
+
+        fresh.click.assert_called_once_with()
+        stale.click.assert_not_called()
+
+    def test_click_uses_cdp_to_recover_unique_redrawn_target(self) -> None:
+        driver = Mock()
+        stale = Mock()
+        stale.tag_name = "button"
+        stale.text = ""
+        stale.get_attribute.side_effect = lambda name: (
+            "chat-action" if name == "aria-label" else ""
+        )
+        stale.is_enabled.side_effect = StaleElementReferenceException()
+        fresh = Mock()
+        fresh.is_displayed.return_value = True
+        fresh.is_enabled.return_value = True
+
+        def find_elements(by: str, value: str) -> list[Mock]:
+            if by == "css selector" and "data-ziniao-cdp-click-target" in value:
+                return [fresh]
+            return []
+
+        driver.find_elements.side_effect = find_elements
+        driver.execute_cdp_cmd.return_value = {
+            "result": {"value": {"matchCount": 1}}
+        }
+        workflow = CreatorContactWorkflow(driver)
+
+        with patch.object(workflow, "_random_pause", return_value=4.0):
+            workflow._click(stale)
+
+        driver.execute_cdp_cmd.assert_called_with(
+            "Runtime.evaluate",
+            {
+                "expression": unittest.mock.ANY,
+                "returnByValue": True,
+                "awaitPromise": False,
+            },
+        )
+        fresh.click.assert_called_once_with()
+        stale.click.assert_not_called()
+        self.assertEqual(workflow._cdp_click_recovery_count, 1)
+
+    def test_click_does_not_retry_after_click_returns_successfully(
+        self,
+    ) -> None:
+        driver = Mock()
+        element = Mock()
+        workflow = CreatorContactWorkflow(driver)
+
+        with patch.object(workflow, "_random_pause", return_value=4.0):
+            workflow._click(element)
+
+        element.click.assert_called_once_with()
+        driver.execute_cdp_cmd.assert_not_called()
+
+    def test_click_revalidates_target_after_random_wait(self) -> None:
+        driver = Mock()
+        element = Mock()
+        workflow = CreatorContactWorkflow(driver)
+
+        with (
+            patch.object(workflow, "_random_pause", return_value=4.0),
+            self.assertRaisesRegex(
+                ZiniaoWorkflowError,
+                "精确目标",
+            ),
+        ):
+            workflow._click(
+                element,
+                validator=lambda _target: False,
+                validation_message="候选项不再是精确目标。",
+            )
+
+        element.click.assert_not_called()
+
     def test_step_result_is_json_serializable_shape(self) -> None:
         result = WorkflowStepResult(
             step=1,
@@ -123,6 +265,48 @@ class CreatorContactWorkflowTests(unittest.TestCase):
         self.assertTrue(result["reusedExistingWindow"])
         self.assertFalse(result["urlChangedAfterLaunch"])
 
+    def test_cdp_window_lookup_avoids_switching_unrelated_tabs(self) -> None:
+        driver = Mock()
+        driver.window_handles = [
+            "CDwindow-seller",
+            "CDwindow-unrelated",
+            "CDwindow-find",
+        ]
+        urls = {
+            "CDwindow-seller": "https://seller.example.test/",
+            "CDwindow-unrelated": "https://example.test/unrelated",
+            "CDwindow-find": (
+                "https://affiliate.tiktokshopglobalselling.com/"
+                "connection/creator?shop_id=1"
+            ),
+        }
+        driver.current_window_handle = "CDwindow-seller"
+        driver.current_url = urls["CDwindow-seller"]
+        driver.execute_cdp_cmd.return_value = {
+            "targetInfos": [
+                {
+                    "type": "page",
+                    "targetId": handle.removeprefix("CDwindow-"),
+                    "url": url,
+                }
+                for handle, url in urls.items()
+            ]
+        }
+
+        def switch_window(handle: str) -> None:
+            driver.current_window_handle = handle
+            driver.current_url = urls[handle]
+
+        driver.switch_to.window.side_effect = switch_window
+        workflow = CreatorContactWorkflow(driver)
+
+        result = workflow._activate_window_matching(
+            ("/connection/creator",)
+        )
+
+        self.assertIn("/connection/creator", result)
+        driver.switch_to.window.assert_called_once_with("CDwindow-find")
+
     def test_approved_greeting_matches_requested_multiline_copy(self) -> None:
         self.assertEqual(
             APPROVED_GREETING_MESSAGE,
@@ -221,6 +405,16 @@ class CreatorContactWorkflowTests(unittest.TestCase):
             )
         )
         workflow._close_invitation_modal = Mock()
+        workflow.close_creator_tabs_keep_search = Mock(
+            return_value={
+                "creatorTabsClosed": True,
+                "closedCreatorTabCount": 2,
+                "creatorDetailTargetGone": True,
+                "searchTabKept": True,
+                "returnedToFindCreators": True,
+                "findCreatorsSearchReady": True,
+            }
+        )
         workflow._click = Mock()
 
         result = workflow.send_selected_invitation(
@@ -233,7 +427,8 @@ class CreatorContactWorkflowTests(unittest.TestCase):
         self.assertTrue(result.evidence["alreadySent"])
         self.assertFalse(result.evidence["finalInviteButtonClicked"])
         self.assertTrue(result.evidence["invitationCreated"])
-        self.assertFalse(result.evidence["invitationSent"])
+        self.assertTrue(result.evidence["invitationCompleted"])
+        self.assertTrue(result.evidence["invitationSent"])
         workflow._click.assert_not_called()
         workflow._close_invitation_modal.assert_called_once_with(modal)
 
@@ -260,11 +455,17 @@ class CreatorContactWorkflowTests(unittest.TestCase):
 
         driver.switch_to.window.side_effect = switch_window
         driver.close.side_effect = close_window
+        search_input = Mock()
+        search_input.id = "find-creators-search"
+        search_input.is_displayed.return_value = True
+        search_input.is_enabled.return_value = True
+        driver.find_elements.return_value = [search_input]
         switch_window("chat")
         workflow = CreatorContactWorkflow(driver)
         workflow._find_creators_handle = "search"
         workflow._find_creators_url = urls["search"]
         workflow._creator_detail_handle = "detail"
+        workflow._creator_detail_url = urls["detail"]
         workflow._chat_handle = "chat"
 
         result = workflow.close_creator_tabs_keep_search()
@@ -272,10 +473,105 @@ class CreatorContactWorkflowTests(unittest.TestCase):
         self.assertEqual(handles, ["search"])
         self.assertTrue(result["creatorTabsClosed"])
         self.assertEqual(result["closedCreatorTabCount"], 2)
+        self.assertTrue(result["creatorDetailTabClosed"])
+        self.assertTrue(result["creatorDetailTargetGone"])
+        self.assertTrue(result["creatorChatTabClosed"])
         self.assertTrue(result["searchTabKept"])
+        self.assertTrue(result["findCreatorsSearchReady"])
         self.assertEqual(driver.current_window_handle, "search")
 
-    def test_invitation_refresh_verification_never_reclicks(self) -> None:
+    def test_open_find_creators_reuses_ready_page_without_navigation(
+        self,
+    ) -> None:
+        driver = Mock()
+        driver.current_url = (
+            "https://example.test/connection/creator?shop_id=123"
+        )
+        driver.current_window_handle = "search"
+        driver.title = "Find creators"
+        driver.find_elements.return_value = []
+        search_input = Mock()
+        workflow = CreatorContactWorkflow(driver)
+        workflow._wait_for_document = Mock()
+        workflow._activate_existing_find_creators = Mock(
+            return_value={
+                "handle": "search",
+                "url": driver.current_url,
+                "duplicateFindCreatorsTabsClosed": 0,
+            }
+        )
+        workflow._visible_find_creators_search_inputs = Mock(
+            return_value=[search_input]
+        )
+        workflow._wait = Mock(
+            side_effect=lambda condition, **_kwargs: condition(driver)
+        )
+
+        result = workflow.open_find_creators()
+
+        self.assertTrue(
+            result.evidence["reusedExistingFindCreatorsTab"]
+        )
+        self.assertTrue(result.evidence["pageNavigationSkipped"])
+        self.assertTrue(result.evidence["pageRefreshSkipped"])
+        self.assertTrue(result.evidence["findCreatorsSearchReady"])
+        self.assertFalse(
+            result.evidence["existingPageReloadedForRecovery"]
+        )
+        driver.get.assert_not_called()
+        driver.refresh.assert_not_called()
+
+    def test_open_find_creators_reloads_only_when_reused_dom_is_stale(
+        self,
+    ) -> None:
+        driver = Mock()
+        driver.current_url = (
+            "https://example.test/connection/creator?shop_id=123"
+        )
+        driver.current_window_handle = "search"
+        driver.title = "Find creators"
+        driver.find_elements.return_value = []
+        search_input = Mock()
+        workflow = CreatorContactWorkflow(driver)
+        workflow._wait_for_document = Mock()
+        workflow._random_pause = Mock(return_value=6.5)
+        workflow._activate_existing_find_creators = Mock(
+            return_value={
+                "handle": "search",
+                "url": driver.current_url,
+                "duplicateFindCreatorsTabsClosed": 0,
+            }
+        )
+        workflow._visible_find_creators_search_inputs = Mock(
+            return_value=[search_input]
+        )
+        workflow._wait = Mock(
+            side_effect=[
+                ZiniaoWorkflowError("stale page"),
+                [search_input],
+            ]
+        )
+
+        result = workflow.open_find_creators()
+
+        driver.get.assert_called_once_with(driver.current_url)
+        workflow._random_pause.assert_called_once_with(
+            5.0,
+            8.0,
+            refresh=True,
+        )
+        self.assertTrue(
+            result.evidence["reusedExistingFindCreatorsTab"]
+        )
+        self.assertFalse(result.evidence["pageNavigationSkipped"])
+        self.assertFalse(result.evidence["pageRefreshSkipped"])
+        self.assertTrue(
+            result.evidence["existingPageReloadedForRecovery"]
+        )
+
+    def test_invitation_click_completes_without_waiting_for_panel_update(
+        self,
+    ) -> None:
         workflow = CreatorContactWorkflow(Mock())
         workflow._require_verified_recipient = Mock(return_value={})
         workflow._greeting_delivery_verified = True
@@ -298,28 +594,18 @@ class CreatorContactWorkflowTests(unittest.TestCase):
         workflow._right_panel_invitation_visible = Mock(
             return_value=False
         )
-        workflow._wait = Mock(
-            side_effect=ZiniaoWorkflowError("实时面板未更新")
-        )
         workflow._refresh_invitation_with_retries = Mock(
-            return_value={
-                "rightPanelInvitationVisible": True,
-                "invitationId": "7666768491349280526",
-                "invitationGroupId": "7664550207413847821",
-                "successMessage": "",
-                "verifiedAfterRefresh": True,
-                "refreshAttempts": 1,
-                "randomWaitSeconds": [3.5],
-                "invitationSyncPending": False,
-                "skipCreator": False,
-            }
+            side_effect=AssertionError("不得刷新后扫描邀请状态")
         )
-        workflow._right_panel_invitation_card = Mock(
-            return_value=(
-                Mock(),
-                "7664550207413847821",
-                "7666768491349280526",
-            )
+        workflow.close_creator_tabs_keep_search = Mock(
+            return_value={
+                "creatorTabsClosed": True,
+                "closedCreatorTabCount": 2,
+                "creatorDetailTargetGone": True,
+                "searchTabKept": True,
+                "returnedToFindCreators": True,
+                "findCreatorsSearchReady": True,
+            }
         )
         workflow._click = Mock()
 
@@ -330,64 +616,16 @@ class CreatorContactWorkflowTests(unittest.TestCase):
             confirm_send=True,
         )
 
+        self.assertTrue(result.evidence["invitationButtonClicked"])
+        self.assertTrue(result.evidence["invitationCompleted"])
+        self.assertFalse(
+            result.evidence["invitationSubmissionConfirmed"]
+        )
         workflow._click.assert_called_once_with(invite_button)
-        workflow._refresh_invitation_with_retries.assert_called_once()
-        self.assertTrue(result.evidence["verifiedAfterRefresh"])
-        self.assertTrue(result.evidence["invitationCreated"])
-        self.assertFalse(result.evidence["invitationSent"])
+        workflow._refresh_invitation_with_retries.assert_not_called()
+        workflow.driver.refresh.assert_not_called()
 
-    def test_invitation_refresh_retries_three_times_with_random_waits(
-        self,
-    ) -> None:
-        workflow = CreatorContactWorkflow(Mock(), timeout_seconds=60)
-        workflow._refresh_and_verify_invitation = Mock(
-            side_effect=ZiniaoWorkflowError("卡片尚未同步")
-        )
-        with (
-            patch(
-                "ziniao_automation.actions.creator_contact.random.uniform",
-                side_effect=[3.25, 4.5, 4.875],
-            ),
-            patch(
-                "ziniao_automation.actions.creator_contact.time.sleep"
-            ) as sleep,
-        ):
-            result = workflow._refresh_invitation_with_retries(
-                "@delaneykreusel",
-                "7493994012378827459",
-                "金色拉链+短裤13",
-            )
-
-        self.assertTrue(result["skipCreator"])
-        self.assertTrue(result["invitationSyncPending"])
-        self.assertEqual(result["refreshAttempts"], 3)
-        self.assertEqual(
-            result["randomWaitSeconds"],
-            [3.25, 4.5, 4.875],
-        )
-        self.assertEqual(
-            workflow._refresh_and_verify_invitation.call_count,
-            3,
-        )
-        self.assertEqual(
-            [call.args[0] for call in sleep.call_args_list],
-            [3.25, 4.5, 4.875],
-        )
-
-    def test_invitation_success_text_accepts_add_success_toast(self) -> None:
-        driver = Mock()
-        toast = Mock()
-        toast.text = "添加成功"
-        driver.find_elements.return_value = [toast]
-        workflow = CreatorContactWorkflow(driver)
-        workflow._is_visible = Mock(return_value=True)
-
-        self.assertEqual(
-            workflow._visible_invitation_success_text(),
-            "添加成功",
-        )
-
-    def test_success_toast_without_synced_card_skips_creator(
+    def test_missing_panel_card_does_not_block_invitation_handoff(
         self,
     ) -> None:
         workflow = CreatorContactWorkflow(Mock())
@@ -411,29 +649,70 @@ class CreatorContactWorkflowTests(unittest.TestCase):
         workflow._invitation_row = Mock(return_value=row)
         workflow._modal_invite_button = Mock(return_value=invite_button)
         workflow._right_panel_invitation_visible = Mock(return_value=False)
-        workflow._wait = Mock(
-            return_value={
-                "rightPanelInvitationVisible": False,
-                "successMessage": "邀请添加成功",
-            }
-        )
         workflow._refresh_invitation_with_retries = Mock(
-            return_value={
-                "rightPanelInvitationVisible": False,
-                "verifiedAfterRefresh": False,
-                "refreshAttempts": 3,
-                "randomWaitSeconds": [3.2, 4.1, 4.9],
-                "invitationSyncPending": True,
-                "skipCreator": True,
-                "skipReason": "连续刷新三次仍未显示",
-            }
+            side_effect=AssertionError("不得刷新后扫描邀请状态")
         )
         workflow.close_creator_tabs_keep_search = Mock(
             return_value={
                 "creatorTabsClosed": True,
                 "closedCreatorTabCount": 2,
+                "creatorDetailTargetGone": True,
                 "searchTabKept": True,
                 "returnedToFindCreators": True,
+                "findCreatorsSearchReady": True,
+            }
+        )
+        workflow._click = Mock()
+
+        result = workflow.send_selected_invitation(
+            "@delaneykreusel",
+            "7493994012378827459",
+            "金色拉链+短裤13",
+            invitation_group_id="7664550207413847821",
+            confirm_send=True,
+        )
+
+        self.assertTrue(result.evidence["invitationCompleted"])
+        self.assertFalse(
+            result.evidence["invitationSubmissionConfirmed"]
+        )
+        workflow._click.assert_called_once_with(invite_button)
+        workflow._refresh_invitation_with_retries.assert_not_called()
+        workflow.driver.refresh.assert_not_called()
+
+    def test_final_invite_click_is_the_invitation_phase_receipt(
+        self,
+    ) -> None:
+        workflow = CreatorContactWorkflow(Mock())
+        workflow._require_verified_recipient = Mock(
+            return_value={"creatorId": "7493994012378827459"}
+        )
+        workflow._greeting_delivery_verified = True
+        workflow._target_collaboration_verified = True
+        workflow._invitation_dialog_verified = True
+        workflow._selected_invitation = "金色拉链+短裤13"
+        workflow._selected_invitation_group_id = "7664550207413847821"
+        modal = Mock()
+        row = Mock()
+        radio = Mock()
+        radio.is_selected.return_value = True
+        row.find_elements.return_value = [radio]
+        invite_button = Mock()
+        invite_button.is_enabled.return_value = True
+        invite_button.get_attribute.return_value = "false"
+        workflow._visible_invitation_modal = Mock(return_value=modal)
+        workflow._invitation_row = Mock(return_value=row)
+        workflow._modal_invite_button = Mock(return_value=invite_button)
+        workflow._right_panel_invitation_visible = Mock(return_value=False)
+        workflow._refresh_invitation_with_retries = Mock()
+        workflow.close_creator_tabs_keep_search = Mock(
+            return_value={
+                "creatorTabsClosed": True,
+                "closedCreatorTabCount": 2,
+                "creatorDetailTargetGone": True,
+                "searchTabKept": True,
+                "returnedToFindCreators": True,
+                "findCreatorsSearchReady": True,
             }
         )
         workflow._click = Mock()
@@ -447,15 +726,26 @@ class CreatorContactWorkflowTests(unittest.TestCase):
         )
 
         self.assertTrue(result.success)
-        self.assertTrue(result.evidence["skipCreator"])
-        self.assertFalse(result.evidence["invitationCreated"])
+        self.assertTrue(result.evidence["invitationCompleted"])
+        self.assertTrue(result.evidence["invitationCreated"])
+        self.assertTrue(result.evidence["invitationSent"])
+        self.assertEqual(
+            result.evidence["invitationCompletionSource"],
+            "final_invite_button_click",
+        )
+        self.assertFalse(
+            result.evidence["invitationSubmissionConfirmed"]
+        )
+        self.assertTrue(result.evidence["invitationButtonClicked"])
+        self.assertNotIn("invitationId", result.evidence)
         self.assertFalse(result.evidence["cardReadyToSend"])
-        self.assertEqual(result.evidence["refreshAttempts"], 3)
         self.assertEqual(
             result.evidence["invitationGroupId"],
             "7664550207413847821",
         )
         workflow._click.assert_called_once_with(invite_button)
+        workflow._refresh_invitation_with_retries.assert_not_called()
+        workflow.driver.refresh.assert_not_called()
         workflow.close_creator_tabs_keep_search.assert_called_once()
 
     def test_dynamic_greeting_hash_mismatch_is_rejected(self) -> None:

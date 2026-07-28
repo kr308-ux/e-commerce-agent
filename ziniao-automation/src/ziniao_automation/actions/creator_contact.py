@@ -8,11 +8,13 @@ dedicated methods that require explicit confirmation and re-check the recipient.
 from __future__ import annotations
 
 import hashlib
+import json
 import random
 import re
 import time
+import uuid
 from dataclasses import asdict, dataclass
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 from urllib.parse import parse_qs, urlparse
 
 from selenium.common.exceptions import (
@@ -57,6 +59,8 @@ class CreatorContactWorkflow:
     def __init__(self, driver: WebDriver, *, timeout_seconds: int = 30):
         self.driver = driver
         self.timeout_seconds = timeout_seconds
+        self._action_wait_seconds: list[float] = []
+        self._refresh_wait_seconds: list[float] = []
         self._verified_recipient: tuple[str, str] | None = None
         self._greeting_delivery_verified = False
         self._target_collaboration_verified = False
@@ -68,7 +72,9 @@ class CreatorContactWorkflow:
         self._find_creators_handle: str | None = None
         self._find_creators_url: str | None = None
         self._creator_detail_handle: str | None = None
+        self._creator_detail_url: str | None = None
         self._chat_handle: str | None = None
+        self._cdp_click_recovery_count = 0
 
     def _wait(
         self,
@@ -96,21 +102,349 @@ class CreatorContactWorkflow:
             message="页面在限定时间内未完成加载。",
         )
 
-    def _click(self, element: WebElement) -> None:
-        self.driver.execute_script(
-            "arguments[0].scrollIntoView({block: 'center', inline: 'center'});",
-            element,
-        )
+    def _random_pause(
+        self,
+        minimum: float,
+        maximum: float,
+        *,
+        refresh: bool = False,
+    ) -> float:
+        wait_seconds = round(random.uniform(minimum, maximum), 3)
+        if refresh:
+            self._refresh_wait_seconds.append(wait_seconds)
+        else:
+            self._action_wait_seconds.append(wait_seconds)
+        time.sleep(wait_seconds)
+        return wait_seconds
+
+    def _click_fingerprint(self, element: WebElement) -> dict[str, Any]:
         try:
-            element.click()
-        except ElementClickInterceptedException:
-            self.driver.execute_script("arguments[0].click();", element)
+            fingerprint: dict[str, Any] = {
+                "tag": str(element.tag_name or "").lower(),
+                "text": " ".join(str(element.text or "").split()),
+                "id": str(element.get_attribute("id") or ""),
+                "dataE2e": str(element.get_attribute("data-e2e") or ""),
+                "href": str(element.get_attribute("href") or ""),
+                "ariaLabel": str(
+                    element.get_attribute("aria-label") or ""
+                ),
+                "title": str(element.get_attribute("title") or ""),
+                "name": str(element.get_attribute("name") or ""),
+                "type": str(element.get_attribute("type") or ""),
+                "placeholder": str(
+                    element.get_attribute("placeholder") or ""
+                ),
+                "role": str(element.get_attribute("role") or ""),
+                "className": " ".join(
+                    str(element.get_attribute("class") or "").split()
+                ),
+            }
+        except StaleElementReferenceException:
+            return {}
+        try:
+            context = self.driver.execute_script(
+                """
+                const element = arguments[0];
+                if (!element || !element.isConnected) return null;
+                const root = element.closest(
+                    'tr, [role="row"], [role="dialog"]'
+                );
+                if (!root) return null;
+                const path = [];
+                let current = element;
+                while (current && current !== root) {
+                    const parent = current.parentElement;
+                    if (!parent) return null;
+                    path.unshift(
+                        Array.prototype.indexOf.call(
+                            parent.children,
+                            current
+                        )
+                    );
+                    current = parent;
+                }
+                return {
+                    contextTag: (root.tagName || '').toLowerCase(),
+                    contextRole: root.getAttribute('role') || '',
+                    contextText: (root.innerText || root.textContent || '')
+                        .replace(/\\s+/g, ' ')
+                        .trim(),
+                    contextPath: path,
+                };
+                """,
+                element,
+            )
+            if isinstance(context, dict):
+                fingerprint.update(context)
+        except StaleElementReferenceException:
+            pass
+        return fingerprint
+
+    def _refind_click_target_with_cdp(
+        self,
+        fingerprint: dict[str, Any],
+    ) -> WebElement | None:
+        """Use CDP in the active tab to mark one uniquely matching redraw."""
+        token = uuid.uuid4().hex
+        payload = json.dumps(
+            fingerprint,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        expression = f"""
+            (() => {{
+                const fp = {payload};
+                const token = {json.dumps(token)};
+                const marker = 'data-ziniao-cdp-click-target';
+                const normalize = (value) =>
+                    String(value || '').replace(/\\s+/g, ' ').trim();
+                const attributePairs = [
+                    ['id', 'id'],
+                    ['data-e2e', 'dataE2e'],
+                    ['href', 'href'],
+                    ['aria-label', 'ariaLabel'],
+                    ['title', 'title'],
+                    ['name', 'name'],
+                    ['type', 'type'],
+                    ['placeholder', 'placeholder'],
+                    ['role', 'role'],
+                ];
+                const hasStableIdentity =
+                    Boolean(fp.text) ||
+                    attributePairs.some(([, key]) => Boolean(fp[key]));
+                const matches = (element) => {{
+                    if (!element || !element.isConnected) return false;
+                    if (
+                        fp.tag &&
+                        String(element.tagName || '').toLowerCase() !== fp.tag
+                    ) return false;
+                    if (
+                        element.disabled ||
+                        element.getAttribute('aria-disabled') === 'true'
+                    ) return false;
+                    const style = getComputedStyle(element);
+                    const rect = element.getBoundingClientRect();
+                    if (
+                        style.display === 'none' ||
+                        style.visibility === 'hidden' ||
+                        rect.width <= 0 ||
+                        rect.height <= 0
+                    ) return false;
+                    if (
+                        fp.text &&
+                        normalize(element.innerText || element.textContent) !==
+                            fp.text
+                    ) return false;
+                    for (const [attribute, key] of attributePairs) {{
+                        if (
+                            fp[key] &&
+                            String(element.getAttribute(attribute) || '') !==
+                                fp[key]
+                        ) return false;
+                    }}
+                    if (
+                        !hasStableIdentity &&
+                        fp.className &&
+                        normalize(element.getAttribute('class')) !==
+                            fp.className
+                    ) return false;
+                    return true;
+                }};
+                let candidates = Array.from(
+                    document.querySelectorAll(fp.tag || '*')
+                ).filter(matches);
+                if (
+                    candidates.length !== 1 &&
+                    fp.contextText &&
+                    Array.isArray(fp.contextPath)
+                ) {{
+                    const contexts = Array.from(
+                        document.querySelectorAll(
+                            'tr, [role="row"], [role="dialog"]'
+                        )
+                    ).filter((context) => {{
+                        if (
+                            fp.contextTag &&
+                            String(context.tagName || '').toLowerCase() !==
+                                fp.contextTag
+                        ) return false;
+                        if (
+                            fp.contextRole &&
+                            String(context.getAttribute('role') || '') !==
+                                fp.contextRole
+                        ) return false;
+                        return normalize(
+                            context.innerText || context.textContent
+                        ) === fp.contextText;
+                    }});
+                    const contextual = [];
+                    for (const context of contexts) {{
+                        let current = context;
+                        for (const index of fp.contextPath) {{
+                            current = current?.children?.[index];
+                            if (!current) break;
+                        }}
+                        if (matches(current)) contextual.push(current);
+                    }}
+                    candidates = contextual;
+                }}
+                document.querySelectorAll(`[${{marker}}]`).forEach(
+                    (element) => element.removeAttribute(marker)
+                );
+                if (candidates.length !== 1) {{
+                    return {{matchCount: candidates.length}};
+                }}
+                candidates[0].setAttribute(marker, token);
+                return {{matchCount: 1}};
+            }})()
+        """
+        try:
+            response = self.driver.execute_cdp_cmd(
+                "Runtime.evaluate",
+                {
+                    "expression": expression,
+                    "returnByValue": True,
+                    "awaitPromise": False,
+                },
+            )
+            result = (
+                response.get("result", {}).get("value", {})
+                if isinstance(response, dict)
+                else {}
+            )
+            if result.get("matchCount") != 1:
+                return None
+            marked = self.driver.find_elements(
+                By.CSS_SELECTOR,
+                f'[data-ziniao-cdp-click-target="{token}"]',
+            )
+            visible = [
+                candidate
+                for candidate in marked
+                if candidate.is_displayed() and candidate.is_enabled()
+            ]
+            if len(visible) != 1:
+                return None
+            self._cdp_click_recovery_count += 1
+            return visible[0]
+        except Exception:
+            return None
+
+    def _refind_click_target(
+        self,
+        fingerprint: dict[str, Any],
+    ) -> WebElement:
+        tag = fingerprint.get("tag") or "*"
+        selectors: list[tuple[str, str]] = []
+        for attribute, key in (
+            ("id", "id"),
+            ("data-e2e", "dataE2e"),
+            ("href", "href"),
+            ("aria-label", "ariaLabel"),
+            ("title", "title"),
+            ("name", "name"),
+            ("type", "type"),
+            ("placeholder", "placeholder"),
+            ("role", "role"),
+        ):
+            value = fingerprint.get(key) or ""
+            if value:
+                selectors.append(
+                    (
+                        By.XPATH,
+                        f"//{tag}[@{attribute}={self._xpath_literal(value)}]",
+                    )
+                )
+        text = fingerprint.get("text") or ""
+        if text:
+            selectors.append(
+                (
+                    By.XPATH,
+                    f"//{tag}[normalize-space()="
+                    f"{self._xpath_literal(text)}]",
+                )
+            )
+        for by, value in selectors:
+            matches: dict[str, WebElement] = {}
+            for candidate in self.driver.find_elements(by, value):
+                try:
+                    if candidate.is_displayed() and candidate.is_enabled():
+                        matches[candidate.id] = candidate
+                except StaleElementReferenceException:
+                    continue
+            if len(matches) == 1:
+                return next(iter(matches.values()))
+        cdp_match = self._refind_click_target_with_cdp(fingerprint)
+        if cdp_match is not None:
+            return cdp_match
+        raise ZiniaoWorkflowError(
+            "等待后点击目标已重绘，且无法重新定位唯一的同一元素。"
+        )
+
+    def _click(
+        self,
+        element: WebElement,
+        *,
+        validator: Callable[[WebElement], bool] | None = None,
+        validation_message: str = "等待后点击目标已不再满足任务约束。",
+    ) -> None:
+        fingerprint = self._click_fingerprint(element)
+        self._random_pause(3.0, 5.0)
+        target: WebElement | None = element
+        last_stale: Exception | None = None
+        for attempt in range(3):
+            if target is None:
+                try:
+                    target = self._refind_click_target(fingerprint)
+                except ZiniaoWorkflowError as error:
+                    last_stale = error
+                    if attempt < 2:
+                        time.sleep(0.2)
+                        continue
+                    raise
+            try:
+                target.is_enabled()
+                if validator is not None and not validator(target):
+                    raise ZiniaoWorkflowError(validation_message)
+                self.driver.execute_script(
+                    "arguments[0].scrollIntoView({block: 'center', "
+                    "inline: 'center'});",
+                    target,
+                )
+                if validator is not None and not validator(target):
+                    raise ZiniaoWorkflowError(validation_message)
+                try:
+                    target.click()
+                except ElementClickInterceptedException:
+                    self.driver.execute_script(
+                        "arguments[0].click();",
+                        target,
+                    )
+                return
+            except StaleElementReferenceException as error:
+                last_stale = error
+                target = None
+                if attempt < 2:
+                    time.sleep(0.2)
+                    continue
+                break
+        raise ZiniaoWorkflowError(
+            "点击前目标连续重绘，CDP 有限重试后仍无法安全定位。"
+        ) from last_stale
+
+    def _refresh_page(self) -> float:
+        """Refresh once, always respecting the 5–8 second page interval."""
+        wait_seconds = self._random_pause(5.0, 8.0, refresh=True)
+        self.driver.refresh()
+        self._wait_for_document()
+        return wait_seconds
 
     def _first_clickable(
         self,
         selectors: Iterable[tuple[str, str]],
         *,
         missing_message: str,
+        timeout_seconds: int | None = None,
     ) -> WebElement:
         def find(driver: WebDriver) -> WebElement | bool:
             for by, value in selectors:
@@ -122,7 +456,11 @@ class CreatorContactWorkflow:
                         continue
             return False
 
-        return self._wait(find, message=missing_message)
+        return self._wait(
+            find,
+            message=missing_message,
+            timeout_seconds=timeout_seconds,
+        )
 
     def _failure_evidence(self, step: int) -> dict[str, Any]:
         artifact_dir = PROJECT_ROOT / "temporary" / "ziniao-contact"
@@ -145,11 +483,93 @@ class CreatorContactWorkflow:
             "screenshot": screenshot,
         }
 
-    def _activate_window_matching(self, url_markers: Iterable[str]) -> str | bool:
+    def _window_targets(self) -> dict[str, dict[str, str]]:
+        """Read tab URLs through CDP without visibly cycling every tab."""
+        handles = set(self.driver.window_handles)
+        targets: dict[str, dict[str, str]] = {}
+        try:
+            payload = self.driver.execute_cdp_cmd("Target.getTargets", {})
+        except Exception:
+            payload = {}
+        target_infos = (
+            payload.get("targetInfos")
+            if isinstance(payload, dict)
+            and isinstance(payload.get("targetInfos"), list)
+            else []
+        )
+        for info in target_infos:
+            if not isinstance(info, dict) or info.get("type") != "page":
+                continue
+            target_id = str(info.get("targetId") or "")
+            candidates = (target_id, f"CDwindow-{target_id}")
+            handle = next(
+                (candidate for candidate in candidates if candidate in handles),
+                "",
+            )
+            if handle:
+                targets[handle] = {
+                    "url": str(info.get("url") or ""),
+                    "targetId": target_id,
+                }
+        try:
+            current_handle = self.driver.current_window_handle
+            targets.setdefault(
+                current_handle,
+                {
+                    "url": self.driver.current_url,
+                    "targetId": "",
+                },
+            )
+        except Exception:
+            pass
+        return targets
+
+    def _activate_window_matching(
+        self,
+        url_markers: Iterable[str],
+        *,
+        preferred_handles: Iterable[str] = (),
+    ) -> str | bool:
         markers = tuple(marker.lower() for marker in url_markers)
         original_handle = self.driver.current_window_handle
         handles = list(self.driver.window_handles)
-        for handle in reversed(handles):
+        try:
+            current_url = self.driver.current_url
+            if any(marker in current_url.lower() for marker in markers):
+                return current_url
+        except Exception:
+            pass
+        target_map = self._window_targets()
+        ordered = [
+            handle
+            for handle in preferred_handles
+            if handle in handles
+        ]
+        ordered.extend(
+            handle
+            for handle in reversed(handles)
+            if handle not in ordered
+        )
+        inspected: set[str] = set()
+        for handle in ordered:
+            known_url = str(
+                (target_map.get(handle) or {}).get("url") or ""
+            )
+            if not known_url or not any(
+                marker in known_url.lower() for marker in markers
+            ):
+                continue
+            try:
+                self.driver.switch_to.window(handle)
+                inspected.add(handle)
+                current_url = self.driver.current_url
+                if any(marker in current_url.lower() for marker in markers):
+                    return self.driver.current_url
+            except Exception:
+                continue
+        for handle in ordered:
+            if handle in inspected or handle in target_map:
+                continue
             try:
                 self.driver.switch_to.window(handle)
                 current_url = self.driver.current_url.lower()
@@ -168,23 +588,182 @@ class CreatorContactWorkflow:
         url_markers: Iterable[str],
         failure_message: str,
     ) -> str:
+        handles_before = set(self.driver.window_handles)
+        source_handle = self.driver.current_window_handle
+        urls_before = {
+            handle: str(target.get("url") or "")
+            for handle, target in self._window_targets().items()
+        }
         self._click(element)
+
+        def activate_clicked_destination(
+            _driver: WebDriver,
+        ) -> str | bool:
+            handles_after = list(self.driver.window_handles)
+            new_handles = [
+                handle
+                for handle in handles_after
+                if handle not in handles_before
+            ]
+            changed_handles = [
+                handle
+                for handle, target in self._window_targets().items()
+                if (
+                    handle in handles_before
+                    and str(target.get("url") or "")
+                    != urls_before.get(handle, "")
+                )
+            ]
+            return self._activate_window_matching(
+                url_markers,
+                preferred_handles=(
+                    *new_handles,
+                    *changed_handles,
+                    source_handle,
+                ),
+            )
+
         url = self._wait(
-            lambda _driver: self._activate_window_matching(url_markers),
+            activate_clicked_destination,
             message=failure_message,
         )
         self._wait_for_document()
         return str(url)
 
+    @staticmethod
+    def _is_find_creators_list_url(url: str) -> bool:
+        return (
+            urlparse(str(url or "")).path.rstrip("/")
+            == "/connection/creator"
+        )
+
+    def _activate_existing_find_creators(self) -> dict[str, Any] | None:
+        targets = self._window_targets()
+        candidates = [
+            (handle, target)
+            for handle, target in targets.items()
+            if self._is_find_creators_list_url(
+                str(target.get("url") or "")
+            )
+        ]
+        if not candidates:
+            return None
+        current_handle = self.driver.current_window_handle
+        selected_handle, selected_target = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate[0] == current_handle
+            ),
+            candidates[-1],
+        )
+        self.driver.switch_to.window(selected_handle)
+        selected_url = self.driver.current_url
+        selected_shop_id = str(
+            (parse_qs(urlparse(selected_url).query).get("shop_id") or [""])[0]
+        )
+        duplicate_count = 0
+        for handle, target in candidates:
+            if handle == selected_handle:
+                continue
+            duplicate_url = str(target.get("url") or "")
+            duplicate_shop_id = str(
+                (
+                    parse_qs(urlparse(duplicate_url).query).get("shop_id")
+                    or [""]
+                )[0]
+            )
+            if (
+                selected_shop_id
+                and duplicate_shop_id != selected_shop_id
+            ):
+                continue
+            target_id = str(target.get("targetId") or "")
+            if not target_id:
+                continue
+            try:
+                closed = self.driver.execute_cdp_cmd(
+                    "Target.closeTarget",
+                    {"targetId": target_id},
+                )
+                if (
+                    not isinstance(closed, dict)
+                    or closed.get("success") is not False
+                ):
+                    duplicate_count += 1
+            except Exception:
+                continue
+        self.driver.switch_to.window(selected_handle)
+        return {
+            "handle": selected_handle,
+            "url": selected_url,
+            "duplicateFindCreatorsTabsClosed": duplicate_count,
+        }
+
+    def _visible_find_creators_search_inputs(self) -> list[WebElement]:
+        selectors = (
+            (By.CSS_SELECTOR, "input.core-input[type='text']"),
+            (By.CSS_SELECTOR, "input[placeholder*='搜索姓名']"),
+            (By.CSS_SELECTOR, "input[placeholder*='Search']"),
+            (
+                By.XPATH,
+                "//input[@type='text' and "
+                "(contains(@placeholder, '姓名') "
+                "or contains(@placeholder, '达人') "
+                "or contains(@placeholder, 'Search') "
+                "or contains(@placeholder, 'search'))]",
+            ),
+        )
+        visible: list[WebElement] = []
+        seen: set[str] = set()
+        for by, selector in selectors:
+            for element in self.driver.find_elements(by, selector):
+                try:
+                    identity = str(getattr(element, "id", "") or id(element))
+                    if (
+                        identity not in seen
+                        and element.is_displayed()
+                        and element.is_enabled()
+                    ):
+                        seen.add(identity)
+                        visible.append(element)
+                except StaleElementReferenceException:
+                    continue
+        return visible
+
     def open_find_creators(self) -> WorkflowStepResult:
         """Step 1: open Affiliate and then the Find Creators page."""
         self.driver.maximize_window()
         self._wait_for_document()
+        reused_find_creators = self._activate_existing_find_creators()
+        existing_page_reloaded_for_recovery = False
+        if reused_find_creators is not None:
+            try:
+                self._wait_for_document()
+                self._wait(
+                    lambda _driver: (
+                        self._visible_find_creators_search_inputs() or False
+                    ),
+                    message=(
+                        "复用的“查找达人”标签页未显示可用搜索框。"
+                    ),
+                    timeout_seconds=min(10, self.timeout_seconds),
+                )
+            except ZiniaoWorkflowError:
+                recovery_url = str(
+                    reused_find_creators.get("url") or ""
+                )
+                if recovery_url:
+                    self._random_pause(5.0, 8.0, refresh=True)
+                    self.driver.get(recovery_url)
+                    self._wait_for_document()
+                    existing_page_reloaded_for_recovery = True
         started_url = self.driver.current_url
         affiliate_url = started_url
 
         if not (
-            "/affiliate" in started_url.lower()
+            self._is_find_creators_list_url(started_url)
+            or "/affiliate" in started_url.lower()
             or "affiliate.tiktokshop" in started_url.lower()
         ):
             affiliate = self._first_clickable(
@@ -262,6 +841,14 @@ class CreatorContactWorkflow:
             )
         self._find_creators_handle = self.driver.current_window_handle
         self._find_creators_url = final_url
+        search_inputs = self._wait(
+            lambda _driver: (
+                self._visible_find_creators_search_inputs() or False
+            ),
+            message=(
+                "第 1 步验收失败：“查找达人”列表页未显示可用搜索框。"
+            ),
+        )
 
         headings = [
             element.text.strip()
@@ -278,6 +865,28 @@ class CreatorContactWorkflow:
                 "currentUrl": final_url,
                 "title": self.driver.title,
                 "headings": headings[:5],
+                "reusedExistingFindCreatorsTab": (
+                    reused_find_creators is not None
+                ),
+                "pageNavigationSkipped": (
+                    reused_find_creators is not None
+                    and not existing_page_reloaded_for_recovery
+                ),
+                "pageRefreshSkipped": (
+                    not existing_page_reloaded_for_recovery
+                ),
+                "existingPageReloadedForRecovery": (
+                    existing_page_reloaded_for_recovery
+                ),
+                "findCreatorsSearchReady": bool(search_inputs),
+                "duplicateFindCreatorsTabsClosed": (
+                    reused_find_creators.get(
+                        "duplicateFindCreatorsTabsClosed",
+                        0,
+                    )
+                    if reused_find_creators is not None
+                    else 0
+                ),
             },
         )
 
@@ -328,26 +937,56 @@ class CreatorContactWorkflow:
         )
 
         exact_handle = self._xpath_literal(bare_handle)
+        requested_handle_literal = self._xpath_literal(requested_handle)
         suggestion = self._first_clickable(
             (
                 (
                     By.XPATH,
                     "//*[@role='menuitem'][.//*"
-                    f"[normalize-space()={exact_handle}]]",
+                    f"[normalize-space()={exact_handle} or "
+                    f"normalize-space()={requested_handle_literal}]]",
                 ),
                 (
                     By.XPATH,
-                    "//*[normalize-space()="
-                    f"{exact_handle}]"
+                    "//*[(normalize-space()="
+                    f"{exact_handle} or normalize-space()="
+                    f"{requested_handle_literal})]"
                     "/ancestor::*[@role='menuitem'][1]",
                 ),
             ),
             missing_message=(
-                f"第 2 步失败：输入 {requested_handle} 后未出现匹配候选项。"
+                f"第 2 步跳过：输入 {requested_handle} 后未出现"
+                "精确同名候选项。"
             ),
+            timeout_seconds=min(8, self.timeout_seconds),
         )
         suggestion_text = suggestion.text.strip()
-        self._click(suggestion)
+
+        def exact_suggestion_still_bound(target: WebElement) -> bool:
+            try:
+                tokens = {
+                    token.strip().lstrip("@").casefold()
+                    for token in str(
+                        target.get_attribute("innerText") or ""
+                    ).splitlines()
+                    if token.strip()
+                }
+                return (
+                    bare_handle.casefold() in tokens
+                    and search_input.get_attribute("value")
+                    == requested_handle
+                )
+            except StaleElementReferenceException:
+                return False
+
+        self._click(
+            suggestion,
+            validator=exact_suggestion_still_bound,
+            validation_message=(
+                "第 2 步被安全门阻止：等待后候选项不再是精确目标"
+                f" {requested_handle}。"
+            ),
+        )
 
         def matching_result_row(driver: WebDriver) -> WebElement | bool:
             for row in driver.find_elements(
@@ -474,6 +1113,7 @@ class CreatorContactWorkflow:
                 "第 3 步验收失败：当前 URL 不是达人详情页。"
             )
         self._creator_detail_handle = self.driver.current_window_handle
+        self._creator_detail_url = final_url
 
         return WorkflowStepResult(
             step=3,
@@ -661,6 +1301,7 @@ class CreatorContactWorkflow:
         bare_handle: str,
     ) -> dict[str, Any] | bool:
         handles = list(self.driver.window_handles)
+        target_map = self._window_targets()
         prioritized = [
             handle for handle in handles if handle not in handles_before
         ]
@@ -670,6 +1311,22 @@ class CreatorContactWorkflow:
             if handle in handles_before
             and handle not in prioritized
         )
+        known_chat_handles = [
+            handle
+            for handle in prioritized
+            if "/seller/im" in str(
+                (target_map.get(handle) or {}).get("url") or ""
+            ).lower()
+        ]
+        unknown_handles = [
+            handle
+            for handle in prioritized
+            if handle not in target_map
+        ]
+        prioritized = [
+            *known_chat_handles,
+            *unknown_handles,
+        ]
         for handle in prioritized:
             try:
                 self.driver.switch_to.window(handle)
@@ -735,15 +1392,11 @@ class CreatorContactWorkflow:
             pass
 
         handles_before = set(self.driver.window_handles)
-        urls_before: dict[str, str] = {}
+        urls_before = {
+            handle: str(target.get("url") or "")
+            for handle, target in self._window_targets().items()
+        }
         source_handle = self.driver.current_window_handle
-        for handle in handles_before:
-            try:
-                self.driver.switch_to.window(handle)
-                urls_before[handle] = self.driver.current_url
-            except Exception:
-                continue
-        self.driver.switch_to.window(source_handle)
         source_url = self.driver.current_url
         self._click(launch_button)
 
@@ -829,6 +1482,9 @@ class CreatorContactWorkflow:
         """Close this creator's detail/chat tabs and return to Find Creators."""
         search_handle = self._find_creators_handle
         search_url = str(self._find_creators_url or "")
+        detail_handle = self._creator_detail_handle
+        detail_url = str(self._creator_detail_url or "")
+        chat_handle = self._chat_handle
         if (
             not search_handle
             or search_handle not in self.driver.window_handles
@@ -840,10 +1496,7 @@ class CreatorContactWorkflow:
             )
 
         closed_count = 0
-        for handle in {
-            self._creator_detail_handle,
-            self._chat_handle,
-        }:
+        for handle in dict.fromkeys((detail_handle, chat_handle)):
             if (
                 not handle
                 or handle == search_handle
@@ -865,6 +1518,7 @@ class CreatorContactWorkflow:
             "/connection/creator" not in current_url.lower()
             or "/connection/creator/detail" in current_url.lower()
         ):
+            self._random_pause(5.0, 8.0, refresh=True)
             self.driver.get(search_url)
             self._wait_for_document()
             current_url = self.driver.current_url
@@ -875,15 +1529,53 @@ class CreatorContactWorkflow:
             raise ZiniaoWorkflowError(
                 "达人标签清理失败：未能返回“查找达人”列表页。"
             )
+        remaining_handles = set(self.driver.window_handles)
+        detail_target_gone = (
+            not detail_handle
+            or (
+                detail_handle == search_handle
+                and self._is_find_creators_list_url(current_url)
+            )
+            or detail_handle not in remaining_handles
+        )
+        chat_target_gone = (
+            not chat_handle
+            or chat_handle == search_handle
+            or chat_handle not in remaining_handles
+        )
+        if not detail_target_gone or not chat_target_gone:
+            raise ZiniaoWorkflowError(
+                "达人标签清理失败：当前达人的详情页或聊天页仍然存在。"
+            )
+        search_inputs = self._wait(
+            lambda _driver: (
+                self._visible_find_creators_search_inputs() or False
+            ),
+            message="达人标签清理失败：“查找达人”搜索框不可用。",
+        )
 
         self._creator_detail_handle = None
+        self._creator_detail_url = None
         self._chat_handle = None
         return {
             "creatorTabsClosed": True,
             "closedCreatorTabCount": closed_count,
+            "creatorDetailUrl": detail_url,
+            "creatorDetailTabClosed": bool(
+                detail_handle
+                and detail_handle != search_handle
+                and detail_handle not in remaining_handles
+            ),
+            "creatorDetailReturnedToSearch": bool(
+                detail_handle == search_handle
+                and self._is_find_creators_list_url(current_url)
+            ),
+            "creatorDetailTargetGone": detail_target_gone,
+            "creatorChatTabClosed": chat_target_gone,
             "searchTabKept": True,
             "returnedToFindCreators": True,
             "findCreatorsUrl": current_url,
+            "findCreatorsSearchReady": bool(search_inputs),
         }
 
     @staticmethod
@@ -908,7 +1600,12 @@ class CreatorContactWorkflow:
 
     @staticmethod
     def validate_greeting_message(message: str) -> str:
-        normalized = str(message or "").replace("\r\n", "\n")
+        normalized = (
+            str(message or "")
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+            .strip()
+        )
         if not normalized.strip():
             raise ZiniaoWorkflowError("招呼语不能为空。")
         if len(normalized) > 2000:
@@ -1702,8 +2399,25 @@ class CreatorContactWorkflow:
         viewport_width = int(
             self.driver.execute_script("return window.innerWidth || 0;")
         )
+        expected_group_id = str(invitation_group_id or "").strip()
+        anchors: dict[str, WebElement] = {
+            element.id: element
+            for element in self._visible_exact_text_elements(invitation_name)
+        }
+        if expected_group_id:
+            compact_id = self._xpath_literal(f"ID:{expected_group_id}")
+            spaced_id = self._xpath_literal(f"ID: {expected_group_id}")
+            for element in self.driver.find_elements(
+                By.XPATH,
+                (
+                    "//*[normalize-space()="
+                    f"{compact_id} or normalize-space()={spaced_id}]"
+                ),
+            ):
+                if self._is_visible(element):
+                    anchors[element.id] = element
         candidates: dict[str, tuple[WebElement, str, str]] = {}
-        for element in self._visible_exact_text_elements(invitation_name):
+        for element in anchors.values():
             try:
                 if element.rect.get("x", 0) < viewport_width * 0.7:
                     continue
@@ -1720,7 +2434,13 @@ class CreatorContactWorkflow:
                         self._is_visible(button) for button in send_buttons
                     ):
                         displayed_group_id = id_match.group(1)
-                        react_ids = self._invitation_ids_from_react(element)
+                        if invitation_name not in text:
+                            current = current.find_element(By.XPATH, "..")
+                            continue
+                        react_ids = (
+                            self._invitation_ids_from_react(current)
+                            or self._invitation_ids_from_react(element)
+                        )
                         actual_invitation_id = react_ids.get(
                             "invitationId", ""
                         )
@@ -1728,23 +2448,39 @@ class CreatorContactWorkflow:
                             "invitationGroupId", ""
                         )
                         group_ids_match = (
-                            bool(react_group_id)
-                            and react_group_id == displayed_group_id
+                            (
+                                bool(react_group_id)
+                                and react_group_id == displayed_group_id
+                            )
+                            or (
+                                not react_group_id
+                                and bool(expected_group_id)
+                                and displayed_group_id == expected_group_id
+                            )
                         )
+                        expected_invitation_id = str(
+                            invitation_id or ""
+                        ).strip()
                         if (
-                            actual_invitation_id
-                            and group_ids_match
+                            group_ids_match
                             and (
-                                invitation_id is None
-                                or not str(invitation_id).strip()
-                                or actual_invitation_id
-                                == str(invitation_id).strip()
+                                (
+                                    expected_invitation_id
+                                    and actual_invitation_id
+                                    == expected_invitation_id
+                                )
+                                or (
+                                    not expected_invitation_id
+                                    and (
+                                        not actual_invitation_id
+                                        or actual_invitation_id.isdigit()
+                                    )
+                                )
                             )
                             and (
-                                invitation_group_id is None
-                                or not str(invitation_group_id).strip()
+                                not expected_group_id
                                 or displayed_group_id
-                                == str(invitation_group_id).strip()
+                                == expected_group_id
                             )
                         ):
                             candidates[current.id] = (
@@ -1775,13 +2511,19 @@ class CreatorContactWorkflow:
               if (!value || typeof value !== 'object' || depth > 5) return;
               if (value instanceof Node || visited.has(value)) return;
               visited.add(value);
+              const invitationId = (
+                value.invitation_id ?? value.invitationId
+              );
+              const invitationGroupId = (
+                value.invitation_group_id ?? value.invitationGroupId
+              );
               if (
-                value.invitation_id != null
-                && value.invitation_group_id != null
+                invitationId != null
+                && invitationGroupId != null
               ) {
                 output.push({
-                  invitationId: String(value.invitation_id),
-                  invitationGroupId: String(value.invitation_group_id)
+                  invitationId: String(invitationId),
+                  invitationGroupId: String(invitationGroupId)
                 });
               }
               for (const key of Object.keys(value)) {
@@ -1831,11 +2573,13 @@ class CreatorContactWorkflow:
         self,
         invitation_name: str,
         invitation_id: str | None = None,
+        invitation_group_id: str | None = None,
     ) -> bool:
         return (
             self._right_panel_invitation_card(
                 invitation_name,
                 invitation_id,
+                invitation_group_id,
             )
             is not None
         )
@@ -1844,32 +2588,6 @@ class CreatorContactWorkflow:
         text = self._target_collaboration_tab().text.strip()
         values = re.findall(r"\d+", text)
         return int(values[-1]) if values else 0
-
-    def _visible_invitation_success_text(self) -> str:
-        selectors = (
-            "//*[contains(@class, 'toast') "
-            "or contains(@class, 'message') "
-            "or @role='alert' "
-            "or normalize-space()='添加成功' "
-            "or normalize-space()='Added successfully']"
-        )
-        for element in self.driver.find_elements(By.XPATH, selectors):
-            try:
-                text = element.text.strip()
-                if (
-                    self._is_visible(element)
-                    and text
-                    and (
-                        ("邀请" in text and "成功" in text)
-                        or "添加成功" in text
-                        or "Invitation sent" in text
-                        or "successfully invited" in text.lower()
-                    )
-                ):
-                    return text[:160]
-            except StaleElementReferenceException:
-                continue
-        return ""
 
     def _close_invitation_modal(self, modal: WebElement) -> None:
         cancel_buttons = modal.find_elements(
@@ -1901,8 +2619,7 @@ class CreatorContactWorkflow:
         *,
         verification_timeout_seconds: int | None = None,
     ) -> dict[str, Any]:
-        self.driver.refresh()
-        self._wait_for_document()
+        refresh_wait_seconds = self._refresh_page()
 
         def verified_recipient(_driver: WebDriver) -> dict[str, Any] | bool:
             try:
@@ -1954,6 +2671,7 @@ class CreatorContactWorkflow:
             "invitationGroupId": invitation_group_id,
             "successMessage": "",
             "verifiedAfterRefresh": True,
+            "refreshWaitSeconds": refresh_wait_seconds,
         }
 
     def _refresh_invitation_with_retries(
@@ -1968,9 +2686,6 @@ class CreatorContactWorkflow:
         random_wait_seconds: list[float] = []
         last_error = ""
         for attempt in range(1, max_attempts + 1):
-            wait_seconds = round(random.uniform(3.0, 5.0), 3)
-            random_wait_seconds.append(wait_seconds)
-            time.sleep(wait_seconds)
             try:
                 verified = self._refresh_and_verify_invitation(
                     creator,
@@ -1984,6 +2699,8 @@ class CreatorContactWorkflow:
             except ZiniaoWorkflowError as error:
                 last_error = str(error)
                 continue
+            wait_seconds = float(verified.get("refreshWaitSeconds") or 0)
+            random_wait_seconds.append(wait_seconds)
             return {
                 **verified,
                 "refreshAttempts": attempt,
@@ -1991,6 +2708,7 @@ class CreatorContactWorkflow:
                 "invitationSyncPending": False,
                 "skipCreator": False,
             }
+        random_wait_seconds = list(self._refresh_wait_seconds[-max_attempts:])
         return {
             "rightPanelInvitationVisible": False,
             "verifiedAfterRefresh": False,
@@ -1999,7 +2717,7 @@ class CreatorContactWorkflow:
             "invitationSyncPending": True,
             "skipCreator": True,
             "skipReason": (
-                "页面提示邀请添加成功，但随机等待 3–5 秒并连续刷新 "
+                "页面提示邀请添加成功，但按 5–8 秒随机间隔连续刷新 "
                 f"{max_attempts} 次后仍未显示定向合作卡片；本次跳过该达人。"
             ),
             "lastRefreshError": last_error,
@@ -2014,7 +2732,7 @@ class CreatorContactWorkflow:
         invitation_group_id: str | None = None,
         confirm_send: bool = False,
     ) -> WorkflowStepResult:
-        """Step 11: submit the selected invitation after every safety gate."""
+        """Step 11: click the exact invitation once, then hand off to phase 2."""
         recipient = self._require_verified_recipient(creator, creator_id)
         normalized_name = str(invitation_name or "").strip()
         expected_group_id = str(invitation_group_id or "").strip()
@@ -2060,11 +2778,16 @@ class CreatorContactWorkflow:
                 "第 11 步前置验收失败：最终邀请按钮不可用。"
             )
 
-        if self._right_panel_invitation_visible(normalized_name):
+        if self._right_panel_invitation_visible(
+            normalized_name,
+            invitation_group_id=expected_group_id,
+        ):
             self._close_invitation_modal(modal)
-            card_match = self._right_panel_invitation_card(normalized_name)
+            card_match = self._right_panel_invitation_card(
+                normalized_name,
+                invitation_group_id=expected_group_id,
+            )
             invitation_group_id = card_match[1] if card_match else ""
-            invitation_id = card_match[2] if card_match else ""
             if (
                 expected_group_id
                 and invitation_group_id != expected_group_id
@@ -2075,9 +2798,9 @@ class CreatorContactWorkflow:
                 )
             self._created_invitation = {
                 "name": normalized_name,
-                "invitationId": invitation_id,
                 "invitationGroupId": invitation_group_id,
             }
+            cleanup = self.close_creator_tabs_keep_search()
             return WorkflowStepResult(
                 step=11,
                 action="send_selected_invitation",
@@ -2088,109 +2811,33 @@ class CreatorContactWorkflow:
                     "allPreconditionsVerified": True,
                     "alreadySent": True,
                     "finalInviteButtonClicked": False,
+                    "invitationButtonClicked": False,
+                    "invitationSubmissionAttempted": False,
+                    "invitationCompletionSource": "existing_invitation",
+                    "invitationSubmissionConfirmed": True,
+                    "invitationConfirmationSource": (
+                        "existing_right_panel_invitation_card"
+                    ),
                     "dialogClosed": True,
                     "rightPanelInvitationVisible": True,
-                    "invitationId": invitation_id,
                     "invitationGroupId": invitation_group_id,
-                    "successMessage": "",
-                    "verifiedAfterRefresh": False,
                     "invitationCreated": True,
-                    "cardReadyToSend": True,
-                    "invitationSent": False,
+                    "invitationCompleted": True,
+                    "cardReadyToSend": False,
+                    "invitationSent": True,
+                    "actionWaitSeconds": list(self._action_wait_seconds),
+                    **cleanup,
                 },
             )
 
         self._click(invite_button)
-
-        def invitation_delivery(_driver: WebDriver) -> dict[str, Any] | bool:
-            if self._visible_invitation_modal(creator):
-                return False
-            right_panel_visible = self._right_panel_invitation_visible(
-                normalized_name
-            )
-            success_text = self._visible_invitation_success_text()
-            if right_panel_visible or success_text:
-                return {
-                    "rightPanelInvitationVisible": right_panel_visible,
-                    "successMessage": success_text,
-                }
-            return False
-
-        try:
-            delivery = self._wait(
-                invitation_delivery,
-                message=(
-                    "第 11 步验收失败：弹窗关闭后未看到邀请成功证据。"
-                ),
-                timeout_seconds=min(10, self.timeout_seconds),
-            )
-        except ZiniaoWorkflowError as error:
-            delivery = {
-                "rightPanelInvitationVisible": False,
-                "successMessage": "",
-                "deliveryEvidenceTimedOut": True,
-                "deliveryError": str(error),
-            }
-
-        if not delivery.get("rightPanelInvitationVisible"):
-            refreshed_delivery = self._refresh_invitation_with_retries(
-                creator,
-                creator_id,
-                normalized_name,
-            )
-            if refreshed_delivery.get("skipCreator") is True:
-                cleanup = self.close_creator_tabs_keep_search()
-                return WorkflowStepResult(
-                    step=11,
-                    action="send_selected_invitation",
-                    success=True,
-                    evidence={
-                        **recipient,
-                        "invitationName": normalized_name,
-                        "allPreconditionsVerified": True,
-                        "alreadySent": False,
-                        "finalInviteButtonClicked": True,
-                        "dialogClosed": True,
-                        **delivery,
-                        **refreshed_delivery,
-                        "invitationId": "",
-                        "invitationGroupId": expected_group_id,
-                        "invitationCreated": False,
-                        "invitationSubmitAcknowledged": True,
-                        "cardReadyToSend": False,
-                        "invitationSent": False,
-                        **cleanup,
-                    },
-                )
-            delivery = {
-                **delivery,
-                **refreshed_delivery,
-            }
-
-        card_match = self._right_panel_invitation_card(normalized_name)
-        invitation_id = (
-            card_match[2]
-            if card_match is not None
-            else str(delivery.get("invitationId") or "")
-        )
-        invitation_group_id = (
-            card_match[1]
-            if card_match is not None
-            else str(delivery.get("invitationGroupId") or "")
-        )
-        if (
-            expected_group_id
-            and invitation_group_id != expected_group_id
-        ):
-            raise ZiniaoWorkflowError(
-                "第 11 步验收失败：创建结果的 invitationGroupId "
-                "与任务快照不一致。"
-            )
+        invitation_group_id = expected_group_id
         self._created_invitation = {
             "name": normalized_name,
-            "invitationId": invitation_id,
             "invitationGroupId": invitation_group_id,
         }
+        time.sleep(3.0)
+        cleanup = self.close_creator_tabs_keep_search()
         return WorkflowStepResult(
             step=11,
             action="send_selected_invitation",
@@ -2201,13 +2848,18 @@ class CreatorContactWorkflow:
                 "allPreconditionsVerified": True,
                 "alreadySent": False,
                 "finalInviteButtonClicked": True,
-                "dialogClosed": True,
-                **delivery,
-                "invitationId": invitation_id,
+                "invitationButtonClicked": True,
+                "invitationSubmissionAttempted": True,
+                "invitationSubmissionConfirmed": False,
+                "invitationCompletionSource": "final_invite_button_click",
                 "invitationGroupId": invitation_group_id,
                 "invitationCreated": True,
-                "cardReadyToSend": True,
-                "invitationSent": False,
+                "invitationCompleted": True,
+                "cardReadyToSend": False,
+                "invitationSent": True,
+                "invitationPostClickWaitSeconds": 3.0,
+                "actionWaitSeconds": list(self._action_wait_seconds),
+                **cleanup,
             },
         )
 
@@ -2238,12 +2890,18 @@ class CreatorContactWorkflow:
     ) -> dict[str, Any]:
         del invitation_name
         normalized_invitation_id = str(invitation_id or "").strip()
-        if not normalized_invitation_id.isdigit():
+        if (
+            normalized_invitation_id
+            and not normalized_invitation_id.isdigit()
+        ):
             return {
                 "exactPlanCardVisible": False,
                 "exactPlanCardCount": 0,
                 "planCardServerIds": [],
                 "planCardMessageKeys": [],
+                "verifiedPlanCardMessageKeys": [],
+                "targetPlanInvitationIds": [],
+                "verifiedPlanCards": [],
                 "targetPlanMessageVerified": False,
                 "targetPlanPendingCount": 0,
                 "targetPlanFailedCount": 0,
@@ -2363,8 +3021,11 @@ class CreatorContactWorkflow:
             if (
                 isinstance(row, dict)
                 and str(row.get("type") or "") == "targetPlan"
-                and str(row.get("invitationId") or "")
-                == normalized_invitation_id
+                and (
+                    not normalized_invitation_id
+                    or str(row.get("invitationId") or "")
+                    == normalized_invitation_id
+                )
                 and row.get("isFromMe") is True
             )
         ]
@@ -2408,6 +3069,26 @@ class CreatorContactWorkflow:
             str(row["serverId"]): row
             for row in succeeded
         }
+        verified_cards = sorted(
+            (
+                {
+                    "messageKey": message_key(row),
+                    "invitationId": str(
+                        row.get("invitationId") or ""
+                    ),
+                    "serverId": str(row.get("serverId") or ""),
+                    "flightStatus": int(
+                        row.get("flightStatus") or 0
+                    ),
+                    "createTime": int(row.get("createTime") or 0),
+                }
+                for row in succeeded
+            ),
+            key=lambda row: (
+                row["createTime"],
+                row["serverId"],
+            ),
+        )
         return {
             "exactPlanCardVisible": bool(matches),
             "exactPlanCardCount": len(matches),
@@ -2415,6 +3096,17 @@ class CreatorContactWorkflow:
             "planCardMessageKeys": sorted(
                 message_key(row) for row in target_rows
             ),
+            "verifiedPlanCardMessageKeys": sorted(
+                row["messageKey"] for row in verified_cards
+            ),
+            "targetPlanInvitationIds": sorted(
+                {
+                    row["invitationId"]
+                    for row in verified_cards
+                    if row["invitationId"].isdigit()
+                }
+            ),
+            "verifiedPlanCards": verified_cards,
             "targetPlanMessageVerified": bool(matches),
             "targetPlanFlightStatus": (
                 int(succeeded[0]["flightStatus"])
@@ -2462,8 +3154,7 @@ class CreatorContactWorkflow:
         invitation_name: str,
         invitation_id: str,
     ) -> dict[str, Any]:
-        self.driver.refresh()
-        self._wait_for_document()
+        refresh_wait_seconds = self._refresh_page()
         self._wait(
             lambda _driver: (
                 self._recipient_evidence(creator, creator_id)
@@ -2490,6 +3181,7 @@ class CreatorContactWorkflow:
         return {
             **evidence,
             "verifiedAfterRefresh": True,
+            "refreshWaitSeconds": refresh_wait_seconds,
         }
 
     def send_collaboration_card(

@@ -6,6 +6,7 @@ from creator_contact.services.candidate_selector import (
     select_candidates,
 )
 from creator_contact.services.contact_runner import (
+    record_invited_creator,
     record_successful_contact,
 )
 
@@ -55,33 +56,55 @@ class CandidateSelectionTests(CreatorContactTestCase):
             "10.00",
         )
 
-    def test_contact_history_requires_terminal_send_verification(self):
+    def test_invitation_receipt_creates_store_global_contact_history(self):
         task = self.create_contact_task(top_n=1)
         freeze_task_targets(task)
         target = task.targets.get()
         target.message_sent = True
-        target.card_sent = True
-        target.target_plan_message_verified = True
-        target.actual_invitation_id = "7666768491349280526"
+        target.invitation_created = True
         target.invitation_group_id = task.invitation_id_snapshot
-        target.final_send_verified = False
         target.result = {
             "success": True,
-            "invitationId": "7666768491349280526",
             "invitationGroupId": task.invitation_id_snapshot,
-            "planCardServerIds": ["server-message-1"],
-            "targetPlanFlightStatus": 3,
+            "invitationCompleted": True,
+            "invitationButtonClicked": True,
+            "invitationSubmissionConfirmed": True,
             "creatorTabsClosed": True,
+            "creatorDetailTargetGone": True,
             "searchTabKept": True,
             "returnedToFindCreators": True,
+            "findCreatorsSearchReady": True,
         }
         target.save()
 
+        invited_record = record_invited_creator(target)
+        self.assertEqual(
+            invited_record.evidence["contactStage"],
+            "INVITATION_COMPLETED",
+        )
+
         with self.assertRaises(ValidationError):
             record_successful_contact(target)
-        self.assertFalse(ContactedCreator.objects.exists())
+        self.assertEqual(ContactedCreator.objects.count(), 1)
 
+        target.actual_invitation_id = "7666768491349280521"
+        target.card_sent = True
+        target.target_plan_message_verified = True
         target.final_send_verified = True
+        target.result.update(
+            {
+                "invitationId": target.actual_invitation_id,
+                "deliverySource": "accepted_creator_list",
+                "acceptedCreatorsPageVisible": True,
+                "projectMembershipVerified": True,
+                "recipientVerified": True,
+                "cardSent": True,
+                "targetPlanMessageVerified": True,
+                "planCardServerIds": ["server-accepted-1"],
+                "targetPlanFlightStatus": 3,
+                "finalSendVerified": True,
+            }
+        )
         target.chat_creator_id = "7493994012378827459"
         target.save()
         record = record_successful_contact(target)
@@ -91,18 +114,68 @@ class CandidateSelectionTests(CreatorContactTestCase):
             record.chat_creator_id,
             "7493994012378827459",
         )
-        self.assertEqual(record.invitation_id, "7666768491349280526")
+        self.assertEqual(record.invitation_id, "7666768491349280521")
         self.assertEqual(
             record.evidence["invitationGroupId"],
             task.invitation_id_snapshot,
         )
+        self.assertTrue(record.evidence["projectMembershipVerified"])
+        self.assertTrue(record.evidence["finalSendVerified"])
+        self.assertEqual(
+            record.evidence["contactStage"],
+            "CARD_DELIVERED",
+        )
 
-    def test_contact_history_rejects_invalid_terminal_server_evidence(self):
+    def test_invitation_history_excludes_same_creator_from_other_project(
+        self,
+    ) -> None:
+        task = self.create_contact_task(top_n=1)
+        freeze_task_targets(task)
+        target = task.targets.get()
+        target.message_sent = True
+        target.invitation_created = True
+        target.invitation_group_id = task.invitation_id_snapshot
+        target.result = {
+            "success": True,
+            "messageSent": True,
+            "invitationGroupId": task.invitation_id_snapshot,
+            "invitationCompleted": True,
+            "invitationButtonClicked": True,
+        }
+        target.save()
+        record_invited_creator(target)
+
+        other_product = self.product.__class__.objects.create(
+            task=self.acquisition_task,
+            external_product_id="other-product",
+            name="Other Product",
+            product_url="https://example.test/other-product",
+        )
+        self.high.__class__.objects.create(
+            product=other_product,
+            creator_handle="@Highest",
+            nickname="Same creator on another project",
+            recent_30_day_revenue=999,
+            recent_7_day_revenue=999,
+        )
+
+        selection = select_candidates(
+            product=other_product,
+            store_id=self.store_id,
+            top_n=3,
+        )
+
+        self.assertEqual(selection.excluded_count, 1)
+        self.assertEqual(selection.creators, ())
+
+    def test_contact_history_rejects_invalid_card_evidence(self):
         cases = (
             {"invitationGroupId": "7664550207413847999"},
-            {"invitationId": "not-numeric"},
+            {"projectMembershipVerified": False},
+            {"recipientVerified": False},
             {"planCardServerIds": []},
-            {"targetPlanFlightStatus": 1},
+            {"targetPlanFlightStatus": 2},
+            {"finalSendVerified": False},
         )
         for replacement in cases:
             with self.subTest(replacement=replacement):
@@ -111,22 +184,39 @@ class CandidateSelectionTests(CreatorContactTestCase):
                 target = task.targets.get()
                 result = {
                     "success": True,
-                    "invitationId": "7666768491349280526",
+                    "invitationId": "7666768491349280521",
                     "invitationGroupId": task.invitation_id_snapshot,
-                    "planCardServerIds": ["server-message-1"],
-                    "targetPlanFlightStatus": 4,
+                    "invitationCompleted": True,
+                    "invitationButtonClicked": True,
+                    "invitationSubmissionConfirmed": True,
                     "creatorTabsClosed": True,
+                    "creatorDetailTargetGone": True,
                     "searchTabKept": True,
                     "returnedToFindCreators": True,
+                    "findCreatorsSearchReady": True,
+                    "deliverySource": "accepted_creator_list",
+                    "acceptedCreatorsPageVisible": True,
+                    "projectMembershipVerified": True,
+                    "recipientVerified": True,
+                    "cardSent": True,
+                    "targetPlanMessageVerified": True,
+                    "planCardServerIds": ["server-accepted-1"],
+                    "targetPlanFlightStatus": 3,
+                    "finalSendVerified": True,
                 }
                 result.update(replacement)
                 target.message_sent = True
-                target.card_sent = True
-                target.target_plan_message_verified = True
-                target.final_send_verified = True
-                target.actual_invitation_id = str(result["invitationId"])
+                target.invitation_created = True
+                target.actual_invitation_id = (
+                    "7666768491349280521"
+                )
                 target.invitation_group_id = str(
                     result["invitationGroupId"]
+                )
+                target.card_sent = True
+                target.target_plan_message_verified = True
+                target.final_send_verified = (
+                    result.get("finalSendVerified") is True
                 )
                 target.result = result
                 target.save()

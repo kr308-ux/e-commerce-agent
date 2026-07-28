@@ -6,7 +6,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,7 +66,9 @@ class SubprocessCollaborationExecutor:
         python_executable: str | None = None,
     ) -> None:
         self.timeout_seconds = timeout_seconds or settings.TASK_TIMEOUT_SECONDS
-        self.python_executable = python_executable or sys.executable
+        self.python_executable = (
+            python_executable or settings.AUTOMATION_PYTHON_EXECUTABLE
+        )
 
     def __call__(self, store_id: str) -> Iterable[dict[str, Any]]:
         required_environment = (

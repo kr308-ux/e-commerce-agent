@@ -365,7 +365,7 @@
             <div>
                 <span class="section-kicker">REVIEW &amp; CREATE</span>
                 <h2 id="contact-step-confirm">确认并创建联系任务</h2>
-                <p>Worker 将逐位核验聊天对象、发送招呼语和定向合作卡片；任一步失败都会停止该达人流程并记录证据。</p>
+                <p>Worker 将逐位核验聊天对象、发送招呼语并创建定向合作邀请；任一步失败都会停止该达人流程并记录证据。</p>
             </div>
             <span class="contact-step-state">最终确认</span>
         </div>
@@ -377,7 +377,7 @@
             </div>
             <div>
                 <span aria-hidden="true">✓</span>
-                <p><strong>逐步校验发送结果</strong><small>刷新复核合作卡片后才标记成功</small></p>
+                <p><strong>两阶段校验发送结果</strong><small>邀请按钮点击后，再从项目达人列表批量发送卡片</small></p>
             </div>
             <div>
                 <span aria-hidden="true">✓</span>
@@ -411,7 +411,7 @@
                 {{ form.confirm_send_card }}
                 <span>
                     <strong>{{ form.confirm_send_card.label }}</strong>
-                    <small>刷新复核后点击合作卡片“发送”。</small>
+                    <small>邀请阶段结束后，在精确项目达人列表中批量发送合作卡片。</small>
                 </span>
             </label>
         </div>

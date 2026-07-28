@@ -124,10 +124,10 @@ def _parser() -> argparse.ArgumentParser:
             subparser.add_argument(
                 "--through-step",
                 type=int,
-                choices=range(1, 13),
+                choices=range(1, 12),
                 default=5,
                 metavar="STEP",
-                help="执行并验收到指定步骤；开放第 1-12 步，默认 5",
+                help="执行并验收到指定步骤；开放第 1-11 步，默认 5",
             )
             subparser.add_argument(
                 "--confirm-send-greeting",
@@ -138,11 +138,6 @@ def _parser() -> argparse.ArgumentParser:
                 "--confirm-send-invitation",
                 action="store_true",
                 help="显式授权第 11 步点击最终邀请按钮",
-            )
-            subparser.add_argument(
-                "--confirm-send-card",
-                action="store_true",
-                help="显式授权第 12 步发送右侧目标合作卡片",
             )
             subparser.add_argument(
                 "--keep-open",
@@ -171,13 +166,6 @@ def main(argv: list[str] | None = None) -> int:
                 raise ZiniaoWorkflowError(
                     "第 11 步必须显式提供 "
                     "--confirm-send-invitation。"
-                )
-            if (
-                arguments.through_step >= 12
-                and not arguments.confirm_send_card
-            ):
-                raise ZiniaoWorkflowError(
-                    "第 12 步必须显式提供 --confirm-send-card。"
                 )
         settings = ZiniaoSettings.from_env(
             credentials=_credentials(arguments.prompt)
@@ -320,31 +308,13 @@ def main(argv: list[str] | None = None) -> int:
                         ).to_dict()
                     )
                 if arguments.through_step >= 11:
-                    invitation_result = (
+                    steps.append(
                         workflow.send_selected_invitation(
                             arguments.creator,
                             arguments.creator_id,
                             arguments.invitation_name,
                             confirm_send=(
                                 arguments.confirm_send_invitation
-                            ),
-                        ).to_dict()
-                    )
-                    steps.append(invitation_result)
-                if arguments.through_step >= 12:
-                    steps.append(
-                        workflow.send_collaboration_card(
-                            arguments.creator,
-                            arguments.creator_id,
-                            arguments.invitation_name,
-                            str(
-                                invitation_result.get(
-                                    "evidence", {}
-                                ).get("invitationId")
-                                or ""
-                            ),
-                            confirm_send=(
-                                arguments.confirm_send_card
                             ),
                         ).to_dict()
                     )

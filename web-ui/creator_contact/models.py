@@ -17,8 +17,19 @@ def normalize_creator_handle(value: object) -> str:
     return str(value or "").strip().lstrip("@").strip().casefold()
 
 
-def message_sha256(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+def normalize_message(value: object) -> str:
+    """Return the canonical message representation used across processes."""
+    return (
+        str(value or "")
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .strip()
+    )
+
+
+def message_sha256(value: object) -> str:
+    normalized = normalize_message(value)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 class GreetingTemplate(models.Model):
@@ -41,7 +52,7 @@ class GreetingTemplate(models.Model):
         ]
 
     def save(self, *args, **kwargs) -> None:
-        self.content = str(self.content or "").strip()
+        self.content = normalize_message(self.content)
         self.content_sha256 = message_sha256(self.content)
         super().save(*args, **kwargs)
 
@@ -169,7 +180,7 @@ class CreatorContactTask(models.Model):
 
     def save(self, *args, **kwargs) -> None:
         self.store_id = str(self.store_id or "").strip()
-        self.greeting_snapshot = str(self.greeting_snapshot or "").strip()
+        self.greeting_snapshot = normalize_message(self.greeting_snapshot)
         self.greeting_sha256 = message_sha256(self.greeting_snapshot)
         super().save(*args, **kwargs)
 
@@ -181,6 +192,10 @@ class CreatorContactTarget(models.Model):
     class Status(models.TextChoices):
         PENDING = "PENDING", "等待中"
         RUNNING = "RUNNING", "执行中"
+        INVITATION_COMPLETED = (
+            "INVITATION_COMPLETED",
+            "完成定向合作邀请",
+        )
         SUCCESS = "SUCCESS", "已完成"
         FAILED = "FAILED", "失败"
         SKIPPED = "SKIPPED", "已跳过"

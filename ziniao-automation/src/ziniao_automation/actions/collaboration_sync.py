@@ -7,7 +7,9 @@ pagination.  It never opens an edit menu or clicks invitation/send controls.
 from __future__ import annotations
 
 import json
+import random
 import re
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -407,6 +409,7 @@ class TargetCollaborationSync:
 
     def _click_read_only(self, element: WebElement) -> None:
         """Click a navigation/tab/pagination control, never a write control."""
+        time.sleep(round(random.uniform(3.0, 5.0), 3))
         self.driver.execute_script(
             "arguments[0].scrollIntoView({block: 'center'});",
             element,
@@ -422,8 +425,61 @@ class TargetCollaborationSync:
             TARGET_INVITATION_PATH
         )
 
+    def _window_urls(self) -> dict[str, str]:
+        handles = set(self.driver.window_handles)
+        urls: dict[str, str] = {}
+        try:
+            payload = self.driver.execute_cdp_cmd("Target.getTargets", {})
+        except Exception:
+            payload = {}
+        infos = (
+            payload.get("targetInfos")
+            if isinstance(payload, dict)
+            and isinstance(payload.get("targetInfos"), list)
+            else []
+        )
+        for info in infos:
+            if not isinstance(info, dict) or info.get("type") != "page":
+                continue
+            target_id = str(info.get("targetId") or "")
+            handle = next(
+                (
+                    candidate
+                    for candidate in (target_id, f"CDwindow-{target_id}")
+                    if candidate in handles
+                ),
+                "",
+            )
+            if handle:
+                urls[handle] = str(info.get("url") or "")
+        try:
+            urls.setdefault(
+                self.driver.current_window_handle,
+                self.driver.current_url,
+            )
+        except Exception:
+            pass
+        return urls
+
     def _activate_target_window(self) -> str | bool:
-        for handle in reversed(list(self.driver.window_handles)):
+        try:
+            if self._is_target_url(self.driver.current_url):
+                return self.driver.current_url
+        except Exception:
+            pass
+        handles = list(self.driver.window_handles)
+        urls = self._window_urls()
+        prioritized = [
+            handle
+            for handle in reversed(handles)
+            if self._is_target_url(urls.get(handle, ""))
+        ]
+        prioritized.extend(
+            handle
+            for handle in reversed(handles)
+            if handle not in prioritized and handle not in urls
+        )
+        for handle in prioritized:
             try:
                 self.driver.switch_to.window(handle)
                 if self._is_target_url(self.driver.current_url):
@@ -434,7 +490,33 @@ class TargetCollaborationSync:
 
     def _affiliate_window(self) -> str | None:
         selected: str | None = None
-        for handle in reversed(list(self.driver.window_handles)):
+        try:
+            current_url = self.driver.current_url.lower()
+            if (
+                "tiktokshopglobalselling.com/affiliate" in current_url
+                or "affiliate.tiktokshopglobalselling.com" in current_url
+            ):
+                return self.driver.current_window_handle
+        except Exception:
+            pass
+        handles = list(self.driver.window_handles)
+        urls = self._window_urls()
+        prioritized = [
+            handle
+            for handle in reversed(handles)
+            if (
+                "tiktokshopglobalselling.com/affiliate"
+                in urls.get(handle, "").lower()
+                or "affiliate.tiktokshopglobalselling.com"
+                in urls.get(handle, "").lower()
+            )
+        ]
+        prioritized.extend(
+            handle
+            for handle in reversed(handles)
+            if handle not in prioritized and handle not in urls
+        )
+        for handle in prioritized:
             try:
                 self.driver.switch_to.window(handle)
                 current_url = self.driver.current_url.lower()
@@ -504,6 +586,7 @@ class TargetCollaborationSync:
     def open_target_page(self) -> str:
         """Open or refresh the target-collaboration page without writes."""
         if self._activate_target_window():
+            time.sleep(round(random.uniform(5.0, 8.0), 3))
             self.driver.refresh()
             self._wait_for_document()
             return self.driver.current_url
@@ -623,14 +706,15 @@ class TargetCollaborationSync:
         return _PageSnapshot.from_mapping(value)
 
     def _wait_for_ready_snapshot(self) -> _PageSnapshot:
+        def ready_snapshot(_driver: WebDriver) -> _PageSnapshot | bool:
+            try:
+                snapshot = self._read_snapshot()
+            except ZiniaoWorkflowError:
+                return False
+            return snapshot if snapshot.ready else False
+
         return self._wait(
-            lambda _driver: (
-                snapshot
-                if (
-                    (snapshot := self._read_snapshot()).ready
-                )
-                else False
-            ),
+            ready_snapshot,
             message="“进行中”邀请列表未完成加载。",
         )
 

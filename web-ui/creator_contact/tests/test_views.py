@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from django.conf import settings
 from django.http import HttpResponse
 from django.test import override_settings
 from django.urls import reverse
@@ -52,6 +53,7 @@ class CreatorContactViewTests(CreatorContactTestCase):
         self.assertContains(dashboard, "达人联系")
         self.assertEqual(detail.status_code, 200)
         self.assertContains(detail, "目标达人执行状态")
+        self.assertContains(detail, "从 Django 启动测试")
 
     def test_candidates_returns_ranked_json(self):
         response = self.client.get(
@@ -182,3 +184,73 @@ class CreatorContactViewTests(CreatorContactTestCase):
         self.assertIn("steps", context)
         self.assertEqual(status.status_code, 200)
         self.assertEqual(status.json()["targetCount"], 1)
+        self.assertEqual(status.json()["invitationCompletedCount"], 0)
+        self.assertEqual(status.json()["cardSentCount"], 0)
+        self.assertEqual(status.json()["cardPendingCount"], 0)
+
+    def test_pending_task_can_be_started_from_django_server(self):
+        task = self.create_contact_task(top_n=1)
+        freeze_task_targets(task)
+
+        with patch(
+            "creator_contact.views.worker_endpoint_ready",
+            return_value=False,
+        ), patch(
+            "creator_contact.views.wait_for_worker_endpoint",
+            return_value=True,
+        ), patch("creator_contact.views.subprocess.Popen") as popen:
+            response = self.client.post(
+                reverse(
+                    "creator_contact:start_task",
+                    kwargs={"task_id": task.pk},
+                ),
+                HTTP_ACCEPT="application/json",
+            )
+
+        task.refresh_from_db()
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(task.status, CreatorContactTask.Status.RUNNING)
+        self.assertEqual(
+            task.current_step,
+            "等待常驻达人联系 Worker 领取任务",
+        )
+        command = popen.call_args.args[0]
+        self.assertEqual(
+            command[0],
+            settings.AUTOMATION_PYTHON_EXECUTABLE,
+        )
+        self.assertIn("run_creator_contact_worker", command)
+        self.assertIn("--server-mode", command)
+        self.assertIn("--control-port", command)
+
+        with patch("creator_contact.views.subprocess.Popen") as duplicate:
+            repeated = self.client.post(
+                reverse(
+                    "creator_contact:start_task",
+                    kwargs={"task_id": task.pk},
+                ),
+                HTTP_ACCEPT="application/json",
+            )
+        self.assertEqual(repeated.status_code, 409)
+        duplicate.assert_not_called()
+
+    def test_start_task_reuses_worker_health_port(self):
+        task = self.create_contact_task(top_n=1)
+        freeze_task_targets(task)
+
+        with patch(
+            "creator_contact.views.worker_endpoint_ready",
+            return_value=True,
+        ), patch("creator_contact.views.subprocess.Popen") as popen:
+            response = self.client.post(
+                reverse(
+                    "creator_contact:start_task",
+                    kwargs={"task_id": task.pk},
+                ),
+                HTTP_ACCEPT="application/json",
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(response.json()["workerReused"])
+        self.assertIn(":16852/health", response.json()["workerEndpoint"])
+        popen.assert_not_called()

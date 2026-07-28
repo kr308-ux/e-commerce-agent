@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
 from typing import Any, Callable
 
 from .actions.creator_contact import CreatorContactWorkflow
-from .client import ZiniaoClient
+from .browser_connection import (
+    ReusableStoreConnection,
+    connect_reusable_store,
+)
 from .config import ZiniaoSettings
-from .errors import ZiniaoError, ZiniaoStoreSelectionError, ZiniaoWorkflowError
-from .models import StoreInfo
-from .process import ZiniaoProcessManager
+from .errors import (
+    ZiniaoError,
+    ZiniaoWorkflowError,
+)
 from .session import SeleniumStoreSession
 
 
@@ -31,7 +36,6 @@ TOOL_ORDER = (
     "ziniao_open_other_invitation_dialog",
     "ziniao_select_invitation",
     "ziniao_send_selected_invitation",
-    "ziniao_send_collaboration_card",
     "ziniao_disconnect",
 )
 
@@ -58,7 +62,10 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "ziniao_connect",
         "title": "连接紫鸟店铺",
-        "description": "连接指定的已授权紫鸟店铺并附加可见 Selenium。",
+        "description": (
+            "优先复用已验证的紫鸟店铺浏览器；仅在缓存失效时启动浏览器，"
+            "随后附加可见 Selenium。"
+        ),
         "inputSchema": _operation_schema(
             properties={
                 "storeId": {"type": "string", "minLength": 1},
@@ -70,7 +77,10 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "ziniao_open_find_creators",
         "title": "进入寻找达人",
-        "description": "点击联盟，再点击寻找达人，并验收达人搜索列表页。",
+        "description": (
+            "优先通过 CDP 激活已打开的查找达人页；不存在时才进入联盟和"
+            "寻找达人，并验收搜索列表页。"
+        ),
         "inputSchema": _operation_schema(),
         "annotations": {"readOnlyHint": False, "destructiveHint": False},
     },
@@ -280,48 +290,12 @@ TOOLS: list[dict[str, Any]] = [
         "annotations": {"readOnlyHint": False, "destructiveHint": True},
     },
     {
-        "name": "ziniao_send_collaboration_card",
-        "title": "发送定向合作卡片",
-        "description": (
-            "刷新复核定向合作数量与邀请 ID，点击右侧目标卡片一次并验证计划卡片发送成功。"
-        ),
-        "inputSchema": _operation_schema(
-            properties={
-                "creator": {"type": "string", "minLength": 1},
-                "creatorId": {
-                    "type": "string",
-                    "pattern": "^[0-9]+$",
-                },
-                "invitationName": {
-                    "type": "string",
-                    "minLength": 1,
-                },
-                "invitationId": {
-                    "type": "string",
-                    "pattern": "^[0-9]+$",
-                },
-                "invitationGroupId": {
-                    "type": "string",
-                    "pattern": "^[0-9]+$",
-                },
-                "confirmSendCard": {
-                    "type": "boolean",
-                    "const": True,
-                },
-            },
-            required=[
-                "creator",
-                "invitationName",
-                "invitationGroupId",
-                "confirmSendCard",
-            ],
-        ),
-        "annotations": {"readOnlyHint": False, "destructiveHint": True},
-    },
-    {
         "name": "ziniao_disconnect",
         "title": "断开紫鸟会话",
-        "description": "安全关闭 Selenium 会话并调用紫鸟 stopBrowser。",
+        "description": (
+            "仅断开本次 Selenium/ChromeDriver 控制连接；"
+            "保留紫鸟店铺浏览器和已验收的查找达人标签页。"
+        ),
         "inputSchema": _operation_schema(),
         "annotations": {"readOnlyHint": False, "destructiveHint": False},
     },
@@ -355,11 +329,54 @@ class ContactAutomationState:
 
     def __init__(self) -> None:
         self.session: SeleniumStoreSession | None = None
+        self.browser_connection: ReusableStoreConnection | None = None
         self.workflow: CreatorContactWorkflow | None = None
-        self.creator: str | None = None
+        self.expected_store_id = os.getenv(
+            "ZINIAO_EXPECTED_STORE_ID", ""
+        ).strip()
+        configured_creator = os.getenv(
+            "ZINIAO_EXPECTED_CREATOR", ""
+        ).strip()
+        if configured_creator:
+            configured_creator, _bare = (
+                CreatorContactWorkflow.normalize_creator_handle(
+                    configured_creator
+                )
+            )
+        self.creator: str | None = configured_creator or None
         self.creator_id: str | None = None
-        self.invitation_name: str | None = None
-        self.invitation_id: str | None = None
+        self.invitation_name: str | None = (
+            os.getenv("ZINIAO_EXPECTED_INVITATION_NAME", "").strip()
+            or None
+        )
+        encoded_greeting = os.getenv(
+            "ZINIAO_EXPECTED_GREETING_B64", ""
+        ).strip()
+        self.expected_greeting = ""
+        if encoded_greeting:
+            try:
+                decoded_greeting = base64.b64decode(
+                    encoded_greeting, validate=True
+                ).decode("utf-8")
+                self.expected_greeting = (
+                    CreatorContactWorkflow.validate_greeting_message(
+                        decoded_greeting
+                    )
+                )
+            except (ValueError, UnicodeDecodeError) as error:
+                raise ZiniaoWorkflowError(
+                    "ZINIAO_EXPECTED_GREETING_B64 不是有效 UTF-8 快照。"
+                ) from error
+        configured_greeting_sha256 = os.getenv(
+            "ZINIAO_EXPECTED_GREETING_SHA256", ""
+        ).strip()
+        self.expected_greeting_sha256 = (
+            CreatorContactWorkflow.greeting_sha256(
+                self.expected_greeting
+            )
+            if self.expected_greeting
+            else configured_greeting_sha256
+        )
         configured_group_id = os.getenv(
             "ZINIAO_INVITATION_GROUP_ID", ""
         ).strip()
@@ -371,6 +388,9 @@ class ContactAutomationState:
             configured_group_id or None
         )
         self.completed: dict[str, dict[str, Any]] = {}
+        self.terminal_failure: dict[str, Any] | None = None
+        self.failed_tool_name: str | None = None
+        self.should_exit = False
 
     def _safe_message(self, error: Exception) -> str:
         message = str(error)
@@ -488,6 +508,17 @@ class ContactAutomationState:
     def call(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if tool_name not in TOOL_ORDER:
             return _failure("UNKNOWN_TOOL", f"未知工具：{tool_name}")
+        if self.terminal_failure is not None:
+            if tool_name == "ziniao_disconnect":
+                return _success({"disconnected": True})
+            return _failure(
+                "TASK_TERMINATED_AFTER_FAILURE",
+                (
+                    "任务已因工具 "
+                    f"{self.failed_tool_name or 'unknown'} "
+                    "发生不可重试错误而终止，不得重复发送或继续后续步骤。"
+                ),
+            )
         if tool_name in self.completed:
             return self.completed[tool_name]
         try:
@@ -523,35 +554,59 @@ class ContactAutomationState:
                 "ziniao_send_selected_invitation": lambda: (
                     self._send_selected_invitation(arguments)
                 ),
-                "ziniao_send_collaboration_card": lambda: (
-                    self._send_collaboration_card(arguments)
-                ),
                 "ziniao_disconnect": self._disconnect,
             }
             result = _success(handlers[tool_name]())
             self.completed[tool_name] = result
             return result
         except ZiniaoError as error:
-            return _failure(type(error).__name__, self._safe_message(error))
+            return self._terminate_after_failure(
+                tool_name,
+                _failure(
+                    type(error).__name__,
+                    self._safe_message(error),
+                ),
+            )
         except Exception as error:
-            return _failure("UNEXPECTED_ERROR", self._safe_message(error))
+            return self._terminate_after_failure(
+                tool_name,
+                _failure(
+                    "UNEXPECTED_ERROR",
+                    self._safe_message(error),
+                ),
+            )
+
+    def _terminate_after_failure(
+        self,
+        tool_name: str,
+        failure: dict[str, Any],
+    ) -> dict[str, Any]:
+        self.terminal_failure = failure
+        self.failed_tool_name = tool_name
+        self.should_exit = True
+        try:
+            self.close()
+        except Exception:
+            pass
+        return failure
 
     def _connect(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        requested_store_id = str(arguments.get("storeId") or "").strip()
+        if (
+            self.expected_store_id
+            and requested_store_id != self.expected_store_id
+        ):
+            raise ZiniaoWorkflowError(
+                "模型提交的 storeId 与任务固定店铺不一致。"
+            )
         settings = ZiniaoSettings.from_env()
-        manager = ZiniaoProcessManager(settings)
-        manager.ensure_started(restart=False)
-        client = ZiniaoClient(settings)
-        client.update_core()
-        store = self._select_store(
-            client.list_stores(),
-            str(arguments.get("storeId") or ""),
+        connection = connect_reusable_store(
+            settings,
+            requested_store_id,
         )
-        session = SeleniumStoreSession(client, settings, store)
-        try:
-            session.connect()
-        except Exception:
-            session.close()
-            raise
+        session = connection.session
+        store = connection.store
+        self.browser_connection = connection
         self.session = session
         assert session.driver is not None
         self.workflow = CreatorContactWorkflow(
@@ -562,6 +617,13 @@ class ContactAutomationState:
             "connected": True,
             "store": store.to_public_dict(),
             "coreVersion": session.started.core_version if session.started else "",
+            "debuggingPort": (
+                session.started.debugging_port if session.started else 0
+            ),
+            "connectionMode": connection.connection_mode,
+            "browserSessionCachePersisted": (
+                connection.cache_persisted
+            ),
             "currentUrl": session.driver.current_url,
             "title": session.driver.title,
         }
@@ -634,14 +696,22 @@ class ContactAutomationState:
         arguments: dict[str, Any],
     ) -> dict[str, Any]:
         creator, creator_id = self._recipient_arguments(arguments)
+        greeting = str(arguments.get("greetingMessage") or "")
+        expected_sha256 = str(
+            arguments.get("greetingSha256") or ""
+        )
+        if self.expected_greeting:
+            if expected_sha256 != self.expected_greeting_sha256:
+                raise ZiniaoWorkflowError(
+                    "模型提交的招呼语哈希与任务固定快照不一致。"
+                )
+            greeting = self.expected_greeting
         return self._require_workflow().send_greeting(
             creator,
             creator_id,
-            str(arguments.get("greetingMessage") or ""),
+            greeting,
             confirm_send=arguments.get("confirmSendGreeting") is True,
-            expected_sha256=str(
-                arguments.get("greetingSha256") or ""
-            ),
+            expected_sha256=expected_sha256,
         ).to_dict()
 
     def _open_target_collaboration(
@@ -710,68 +780,44 @@ class ContactAutomationState:
             stage="邀请发送结果",
         )
         evidence = result.get("evidence", {})
-        if evidence.get("skipCreator") is True:
-            self.invitation_id = None
-            return result
-        invitation_id = str(
-            evidence.get("invitationId") or ""
+        cleanup_verified = (
+            evidence.get("creatorDetailTargetGone") is True
+            and evidence.get("creatorTabsClosed") is True
+            and evidence.get("searchTabKept") is True
+            and evidence.get("returnedToFindCreators") is True
+            and evidence.get("findCreatorsSearchReady") is True
         )
-        if not invitation_id.isdigit():
-            raise ZiniaoWorkflowError(
-                "邀请创建结果未返回有效 invitation_id。"
+        completion_verified = (
+            evidence.get("invitationCompleted") is True
+            and (
+                evidence.get("invitationButtonClicked") is True
+                or evidence.get("alreadySent") is True
             )
-        self.invitation_id = invitation_id
-        return result
-
-    def _send_collaboration_card(
-        self,
-        arguments: dict[str, Any],
-    ) -> dict[str, Any]:
-        creator, creator_id = self._recipient_arguments(arguments)
-        invitation_name = self._remember_invitation_name(
-            arguments.get("invitationName")
         )
-        invitation_group_id = self._remember_invitation_group_id(
-            arguments.get("invitationGroupId")
-        )
-        requested_id = str(arguments.get("invitationId") or "").strip()
-        if (
-            requested_id
-            and self.invitation_id
-            and requested_id != self.invitation_id
-        ):
+        if not (cleanup_verified and completion_verified):
             raise ZiniaoWorkflowError(
-                "合作卡片 invitationId 与已创建邀请不一致。"
+                "邀请阶段未取得按钮点击/幂等完成、标签清理或"
+                "下一位达人可复用搜索页的证据。"
             )
-        invitation_id = requested_id or str(self.invitation_id or "")
-        if not invitation_id.isdigit():
-            raise ZiniaoWorkflowError(
-                "发送合作卡片前缺少有效 invitationId。"
-            )
-        result = self._require_workflow().send_collaboration_card(
-            creator,
-            creator_id,
-            invitation_name,
-            invitation_id or None,
-            invitation_group_id=invitation_group_id,
-            confirm_send=arguments.get("confirmSendCard") is True,
-        ).to_dict()
-        self._verify_result_invitation_group_id(
-            result,
-            invitation_group_id,
-            stage="合作卡片发送结果",
-        )
         return result
 
     def _disconnect(self) -> dict[str, Any]:
         self.close()
-        return {"disconnected": True}
+        return {
+            "disconnected": True,
+            "storeBrowserPreserved": True,
+            "webdriverEndpointPreserved": True,
+        }
 
     def close(self) -> None:
+        connection = self.browser_connection
         session = self.session
+        self.browser_connection = None
         self.session = None
         self.workflow = None
-        if session is not None:
+        if connection is not None:
+            connection.close()
+        elif session is not None:
             session.close()
 
 
@@ -859,6 +905,8 @@ class ZiniaoContactMcpServer:
                         json.dumps(response, ensure_ascii=False),
                         flush=True,
                     )
+                if self.state.should_exit:
+                    break
         finally:
             try:
                 self.state.close()

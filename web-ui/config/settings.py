@@ -1,6 +1,7 @@
 """Django settings for the Browser Agent UI-only phase."""
 
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -9,6 +10,15 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = BASE_DIR.parent
 load_dotenv(PROJECT_ROOT / ".env")
+project_venv_python = (
+    PROJECT_ROOT
+    / ".venv"
+    / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+)
+AUTOMATION_PYTHON_EXECUTABLE = os.getenv(
+    "AUTOMATION_PYTHON_EXECUTABLE",
+    str(project_venv_python if project_venv_python.is_file() else sys.executable),
+)
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "development-only-change-me")
 DEBUG = os.getenv("DJANGO_DEBUG", "true").lower() == "true"
@@ -76,6 +86,16 @@ DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek/deepseek-v4-flash")
 OPENCODE_BINARY = os.getenv("OPENCODE_BINARY", "opencode")
 TASK_TIMEOUT_SECONDS = int(os.getenv("TASK_TIMEOUT_SECONDS", "1800"))
 ZINIAO_CONTACT_STORE_ID = os.getenv("ZINIAO_CONTACT_STORE_ID", "").strip()
+CREATOR_CONTACT_WORKER_HOST = os.getenv(
+    "CREATOR_CONTACT_WORKER_HOST",
+    "127.0.0.1",
+).strip()
+CREATOR_CONTACT_WORKER_PORT = int(
+    os.getenv("CREATOR_CONTACT_WORKER_PORT", "16852")
+)
+CREATOR_CONTACT_WORKER_START_TIMEOUT_SECONDS = float(
+    os.getenv("CREATOR_CONTACT_WORKER_START_TIMEOUT_SECONDS", "10")
+)
 exports_setting = Path(os.getenv("EXPORTS_DIR", "storage/exports"))
 if not exports_setting.is_absolute():
     exports_setting = PROJECT_ROOT / exports_setting

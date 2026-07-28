@@ -28,7 +28,8 @@ Django HTTP 请求不直接执行浏览器操作。任务必须由独立
 
 达人联系模块位于 `web-ui/creator_contact/`，另外持久化招呼语模板、进行中的定向合作、
 联系任务及冻结目标、逐步证据、店铺级已联系记录和定向合作同步任务。已联系记录只会在
-招呼语、邀请和合作卡片均取得强终态证据后写入。
+指定定向邀请按钮点击成功（或确认页面已有同一邀请）后写入；同一店铺下无论商品或
+合作项目都会排除该达人。合作卡片服务端送达证据仍用于任务终态验收。
 
 ## 首次准备
 
@@ -51,8 +52,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-chrome-cdp-windows.ps1
 
 ## 紫鸟店铺 Selenium 连接
 
-紫鸟自动化模块使用官方本地 WebDriver HTTP 接口，按
-`updateCore → getBrowserList → startBrowser → Selenium` 的顺序连接已授权店铺。
+紫鸟自动化模块使用官方本地 WebDriver HTTP 接口，先执行
+`updateCore → getBrowserList`，再优先验证并附加缓存的店铺调试端口；仅在缓存失效时
+调用 `startBrowser`，随后建立 Selenium 会话。
 企业名称、子账号和密码只从本地 `.env` 读取，不写入源码、命令参数或业务日志。
 
 macOS 首次使用：
@@ -81,17 +83,19 @@ ChromeDriver 建立 Selenium 会话、读取页面标题和地址后安全关闭
 ```
 
 经用户明确授权后，流程还支持“校验聊天对象 → 原样发送任务招呼语 → 打开定向合作 →
-选择并创建精确邀请 → 发送右侧合作卡片”。招呼语来自 `--greeting-message` 或 Django
-任务快照，不再依赖代码中的固定文案。第 7、11、12 步分别要求显式确认。
+选择并创建精确邀请”。招呼语来自 `--greeting-message` 或 Django 任务快照，不再依赖
+代码中的固定文案。发送招呼语和最终邀请分别要求显式确认。
 
-TikTok 页面右侧卡片展示的是定向合作级 `invitationGroupId`；为该达人创建邀请后返回的
-是实际 `invitationId`。第 12 步按名称和两个 ID 精确定位，且只有 React 消息模型中的
-`targetPlan` 同时满足本人发送、实际 `invitationId` 匹配、`flightStatus` 为成功态并带
-`serverId` 才验收成功。已成功、发送中、失败或证据不明确时都不会再次盲点“发送”。
+最终邀请步骤不获取达人专属 `invitationId`；点击一次按钮即完成第一阶段，不再扫描会
+瞬间消失的 toast。随后关闭该达人详情和聊天标签并保留查找达人页；所有达人邀请完成后，
+由一个批量进程进入精确项目的已接受达人列表发送合作卡片。
 完整参数见 `ziniao-automation/README.md`。
 
 运行时硬约束：紫鸟只能以
-`--run_type=web_driver --ipc_type=http --port=...` 主进程打开。普通紫鸟工作台、
+`--run_type=web_driver --ipc_type=http --port=16851` 主进程打开。该端口已就绪时直接
+复用；每个店铺的调试端口和 DevTools browser UUID 会跨 Agent 进程缓存。下一位达人
+会附加同一个浏览器，并通过 CDP 激活上一次保留的查找达人页。任务结束只断开
+ChromeDriver，不关闭店铺浏览器或紫鸟主进程；只有用户主动退出时才关闭。普通紫鸟工作台、
 从工作台启动的店铺 Chromium、普通浏览器和人工点击结果均不能作为联系任务的执行或
 验收路径。
 
@@ -118,17 +122,22 @@ ZINIAO_PASSWORD=
 DEEPSEEK_API_KEY=
 ```
 
-启动两个独立 Worker；可用 `--once` 只领取一个待处理任务：
+定向合作同步可使用独立 Worker；达人联系任务既可由 Worker 轮询，也可在任务详情页
+点击“从 Django 启动测试”。Django 会复用监听
+`127.0.0.1:16852/health` 的常驻联系 Worker；仅在健康端口不存在时启动一次：
 
 ```bash
 .venv/bin/python web-ui/manage.py run_collaboration_sync_worker
-.venv/bin/python web-ui/manage.py run_creator_contact_worker
+.venv/bin/python web-ui/manage.py run_creator_contact_worker --server-mode
 ```
 
 定向合作同步 Worker 只读取“进行中”选项。联系 Worker 串行处理任务冻结的达人，
-遇到同店铺已成功联系的规范化 `@handle` 会跳过；只有第 12 步强终态验收成功才写入
-店铺级防重复表。每个达人成功后还必须关闭其详情和 `Cooperation Chat` 标签，并切回
-仍保留的查找达人标签；标签清理未完成同样不能标记成功。当前仓库中的第三个商品
+遇到同店铺已成功联系的规范化 `@handle` 会跳过；搜索结果没有精确同名账号也会立即
+安全跳过。邀请阶段完成全部达人后，卡片阶段只打开一次目标项目和“达人详情”，并在
+同一个 WebDriver 会话中依次发送；邀请按钮点击成功时即写入店铺级防重复表。
+邀请阶段不再扫描瞬时 DOM 提示；批量卡片阶段会逐个精确核验项目成员、聊天对象和
+合作卡片。找不到目标达人时保留“邀请已完成、卡片待处理”状态，但不会再次入选邀请。
+当前仓库中的第三个商品
 Top 3 真实联系属于单独的显式授权测试，不能仅因创建模块或通过单元测试就视为已经
 执行成功。
 

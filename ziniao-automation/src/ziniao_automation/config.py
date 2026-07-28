@@ -15,6 +15,20 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(PROJECT_ROOT / ".env")
 
 
+def _boolean_from_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ZiniaoConfigurationError(
+        f"{name} 必须是 true/false、yes/no、on/off 或 1/0。"
+    )
+
+
 @dataclass(frozen=True)
 class ZiniaoCredentials:
     """Enterprise credentials kept out of repr and command-line arguments."""
@@ -47,6 +61,12 @@ class ZiniaoSettings:
     request_timeout_seconds: int = 120
     core_timeout_seconds: int = 600
     driver_dir: Path = PROJECT_ROOT / "temporary" / "ziniao-webdrivers"
+    browser_session_dir: Path = (
+        PROJECT_ROOT / "temporary" / "ziniao-browser-sessions"
+    )
+    reuse_browser_session: bool = True
+    browser_probe_timeout_seconds: float = 2.0
+    browser_lock_timeout_seconds: float = 30.0
 
     @classmethod
     def from_env(
@@ -64,6 +84,16 @@ class ZiniaoSettings:
         )
         if not driver_setting.is_absolute():
             driver_setting = PROJECT_ROOT / driver_setting
+        browser_session_setting = Path(
+            os.getenv(
+                "ZINIAO_BROWSER_SESSION_DIR",
+                "temporary/ziniao-browser-sessions",
+            )
+        )
+        if not browser_session_setting.is_absolute():
+            browser_session_setting = (
+                PROJECT_ROOT / browser_session_setting
+            )
         settings = cls(
             credentials=credentials or ZiniaoCredentials.from_env(),
             client_path=Path(os.getenv("ZINIAO_CLIENT_PATH", client_default)),
@@ -75,6 +105,17 @@ class ZiniaoSettings:
                 os.getenv("ZINIAO_CORE_TIMEOUT_SECONDS", "600")
             ),
             driver_dir=driver_setting.resolve(),
+            browser_session_dir=browser_session_setting.resolve(),
+            reuse_browser_session=_boolean_from_env(
+                "ZINIAO_REUSE_BROWSER_SESSION",
+                True,
+            ),
+            browser_probe_timeout_seconds=float(
+                os.getenv("ZINIAO_BROWSER_PROBE_TIMEOUT_SECONDS", "2")
+            ),
+            browser_lock_timeout_seconds=float(
+                os.getenv("ZINIAO_BROWSER_LOCK_TIMEOUT_SECONDS", "30")
+            ),
         )
         settings.validate()
         return settings
@@ -93,4 +134,12 @@ class ZiniaoSettings:
         if self.core_timeout_seconds < self.request_timeout_seconds:
             raise ZiniaoConfigurationError(
                 "ZINIAO_CORE_TIMEOUT_SECONDS 不能小于单次请求超时。"
+            )
+        if self.browser_probe_timeout_seconds <= 0:
+            raise ZiniaoConfigurationError(
+                "ZINIAO_BROWSER_PROBE_TIMEOUT_SECONDS 必须大于 0。"
+            )
+        if self.browser_lock_timeout_seconds <= 0:
+            raise ZiniaoConfigurationError(
+                "ZINIAO_BROWSER_LOCK_TIMEOUT_SECONDS 必须大于 0。"
             )

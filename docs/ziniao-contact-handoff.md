@@ -1,6 +1,6 @@
 # 紫鸟联系达人自动化开发交接
 
-更新时间：2026-07-26
+更新时间：2026-07-28
 项目目录：`/Users/kr/Documents/work/project/E-commerce Agent`
 当前分支：`feature/ziniao-control-automation`
 
@@ -22,7 +22,7 @@
 4. 确认 opencode mcp list 中 ziniao-contact 为 connected
 
 当前状态：@delaneykreusel 的已批准招呼语和“金色拉链+短裤13”邀请均已成功发送。
-右侧合作卡片也已取得 React 消息模型强终态证据，禁止重复发送消息、邀请或合作卡片。
+当前流程分为逐达人邀请和批量合作卡片两个阶段；禁止重复发送消息、邀请或卡片。
 第三个商品 Top 3 的真实联系测试尚不能标记为完成；只可在用户当前明确授权的范围内
 执行并逐个验收。紫鸟密码、Cookie、令牌和 DeepSeek Key 不得进入源码、命令参数、
 提示词或日志。
@@ -41,7 +41,8 @@
 禁止使用普通紫鸟工作台启动店铺，禁止直接重启店铺 Chromium，禁止使用普通浏览器或
 人工点击结果替代 Agent 的强终态证据。macOS 进程管理器会同时校验 WebDriver HTTP
 端口与主进程参数；模式不匹配时必须失败关闭。若 WebDriver 主进程没有可附加的店铺
-调试端口，只能通过 `startBrowser` 恢复，不能降级到普通模式。
+调试端口缓存，或缓存的端口与 DevTools browser UUID 验证失败，才通过
+`startBrowser` 恢复，不能降级到普通模式。缓存命中时直接附加已有店铺浏览器。
 
 ## 当前完成情况
 
@@ -66,12 +67,10 @@
 - 聊天对象双重校验：通过（用户名 + `creator_id`）
 - 已批准招呼语：已发送一次，完整消息气泡可见
 - 定向合作邀请：`金色拉链+短裤13`
-- 邀请创建：成功；刷新后“定向合作 1”且右侧邀请卡片可见
+- 邀请创建：成功
 - 定向合作级 `invitationGroupId`：`7664550207413847821`
-- 该达人实际 `invitationId`：`7666768491349280526`
-- 右侧合作卡片：已发送；刷新前置检查发现已存在成功计划卡片，因此幂等返回，没有重复点击
-- React 强终态：`type=targetPlan`、`isFromMe=true`、`flightStatus=3`
-- 计划卡片 `serverId`：`7666787014377260557`
+- 邀请阶段标准：最终按钮点击一次并完成详情/聊天标签清理
+- 联系终态标准：从精确项目已接受达人列表发送卡片并取得服务端送达证据
 
 测试店铺：
 
@@ -81,10 +80,8 @@
 
 不要把企业账号或密码补充到本文档。
 
-这里的两个邀请 ID 不能混用：列表和右侧卡片显示的是共享的
-`invitationGroupId`；点击最终“邀请”后，为当前达人创建的是实际
-`invitationId`。后续验收和店铺级已联系记录必须保留二者，并以实际
-`invitationId` 匹配 React `targetPlan` 消息。
+任务仍以共享的 `invitationGroupId` 精确绑定定向合作选项。最终邀请步骤不获取或保存
+达人专属 `invitationId`。
 
 当前用户指定的招呼语快照为：
 
@@ -175,20 +172,8 @@ CLI 默认值，不能作为服务端任务文案的唯一来源。聊天 `creat
 
 第二种状态已经处理：脚本会点击抽屉右侧区域中的精确目标联系人，再等待输入区出现。
 
-最终合作卡片步骤不会仅凭 Toast、列表预览、卡片消失或“定向合作 1”判断成功。它会
-动态遍历 React fiber/state，提取右侧卡片的 `invitationGroupId`、该达人实际
-`invitationId` 和聊天消息模型，并且只接受：
-
-- `type=targetPlan`
-- `isFromMe=true`
-- 实际 `invitationId` 精确匹配
-- `flightStatus` 为 `3` 或 `4`
-- 非空 `serverId`
-- 匹配消息的 UI 状态不是 `pending`、`sending`、`failed` 或 `error`
-
-发送前若已有成功终态，直接幂等返回；如果尚无成功终态但已有发送中、失败或证据
-不明确状态，停止并保留证据，不再点击。仅在不存在历史目标计划消息且所有前置条件
-唯一匹配时点击一次右侧卡片“发送”。超时后的刷新也只读复核，绝不二次点击。
+最终邀请步骤不再扫描可能短暂出现的 toast；最终按钮点击一次后立即关闭当前达人详情
+和聊天标签，并返回可复用的查找达人页。全部邀请完成后进入单进程批量合作卡片阶段。
 
 ### 紫鸟连接层
 
@@ -201,6 +186,7 @@ CLI 默认值，不能作为服务端任务文案的唯一来源。聊天 `creat
 - `client.py`：紫鸟本地 HTTP API
 - `process.py`：紫鸟 V6 WebDriver 模式进程
 - `drivers.py`：匹配并校验 ChromeDriver
+- `browser_session_cache.py`：跨进程店铺调试端口、browser UUID 和店铺锁
 - `session.py`：Selenium 店铺会话生命周期
 - `config.py`：环境变量配置
 - `errors.py`：类型化错误
@@ -211,9 +197,10 @@ CLI 默认值，不能作为服务端任务文案的唯一来源。聊天 `creat
 ```text
 updateCore
   → getBrowserList
-  → startBrowser
+  → 验证缓存的 debuggingPort + DevTools browser UUID
+  → 缓存命中则直接附加；失效时才 startBrowser
   → Selenium debuggerAddress
-  → stopBrowser
+  → 仅断开本次 ChromeDriver
 ```
 
 已修复 Ctrl+C 时 ChromeDriver 先断开导致清理异常覆盖原始中断的问题。
@@ -240,26 +227,23 @@ updateCore
 10. `ziniao_open_other_invitation_dialog`
 11. `ziniao_select_invitation`
 12. `ziniao_send_selected_invitation`
-13. `ziniao_send_collaboration_card`
-14. `ziniao_disconnect`
+13. `ziniao_disconnect`
 
 MCP 会强制调用顺序、固定同一目标达人，并缓存已成功步骤，避免 Agent 重复执行。
 发生失败时允许安全调用 `ziniao_disconnect`。
 
-三个远端写工具都要求显式布尔确认：
+两个远端写工具都要求显式布尔确认：
 
 - `ziniao_send_greeting`：
   `confirmSendGreeting=true`
 - `ziniao_send_selected_invitation`：
   `confirmSendInvitation=true`
-- `ziniao_send_collaboration_card`：
-  `confirmSendCard=true`
 
 `ziniao_send_greeting` 还要求任务传入完整 `greetingMessage` 和对应
 `greetingSha256`，MCP 不得改写文案。发送邀请前会重新核验对象、前置步骤、目标单选框
-和最终按钮；创建结果缓存实际 `invitationId`。合作卡片工具要求复用该 ID，并同时核对
-右侧卡片的 `invitationGroupId`。若面板未实时更新，只刷新并只读复核 React 强终态，
-不会重复点击。已经存在的成功计划卡片直接按幂等成功返回。
+和最终按钮；点击调用成功返回后立即清理当前达人标签，不等待瞬时 DOM 文案或右侧
+合作卡片同步。
+邀请阶段不获取达人专属 `invitationId`；该 ID 由后续卡片消息终态证据提供。
 
 启动脚本：
 
@@ -287,8 +271,8 @@ MCP 会强制调用顺序、固定同一目标达人，并缓存已成功步骤�
 
 `ses_06264a117ffeKMSlzF221j3i3f`
 
-该 Session 只覆盖当时的“连接至打开聊天并断开”7 个工具，不代表后来新增的招呼语、
-邀请创建和合作卡片步骤已经由同一 Session 跑过。该只读范围内所有调用均返回：
+该 Session 只覆盖当时的“连接至打开聊天并断开”7 个工具，不代表后来新增的招呼语和
+邀请创建步骤已经由同一 Session 跑过。该只读范围内所有调用均返回：
 
 ```json
 {
@@ -298,8 +282,8 @@ MCP 会强制调用顺序、固定同一目标达人，并缓存已成功步骤�
 ```
 
 当前 Agent 提示会把任务招呼语作为数据原样传入，并附带 SHA-256；业务
-`--through-step` 已扩展到 12。第 12 步的成功不能采信模型最终文本，只能采信
-`ziniao_send_collaboration_card` 工具返回的 React `targetPlan` 强终态证据。
+`--through-step` 最大为 11，对应业务流程第 12 步。邀请完成不能采信模型最终文本，
+只能采信 `ziniao_send_selected_invitation` 返回的按钮点击/幂等证据和标签清理证据。
 
 上一阶段只读 Agent 结果确认：
 
@@ -340,13 +324,14 @@ MCP 会强制调用顺序、固定同一目标达人，并缓存已成功步骤�
 - `CreatorContactTask`：冻结商品、Top N、招呼语、定向合作和三个写操作确认；
 - `CreatorContactTarget`：冻结每位达人的排名、`@handle`、7/30 天销售额及执行证据；
 - `CreatorContactTaskStep`：持久化每个 MCP 工具步骤的安全输入输出摘要；
-- `ContactedCreator`：店铺级成功联系去重表；
+- `ContactedCreator`：店铺级定向邀请去重表；
 - `CollaborationSyncJob`：定向合作只读同步队列。
 
 候选达人从已成功的“获取达人数据”商品中选择，先按近 30 天销售额降序，再按近 7 天
 销售额降序和 handle 稳定排序。handle 会移除 `@` 并大小写归一；同店铺
-`ContactedCreator` 中已经成功的达人会在截取 Top N **之前**排除。任务创建时立即冻结
-最终目标，Worker 串行处理；另一任务已成功联系的目标会在执行前再次跳过。
+`ContactedCreator` 中已经完成定向邀请按钮点击/幂等确认的达人会在截取 Top N
+**之前**排除。任务创建时立即冻结最终目标，Worker 串行处理；另一任务已邀请的目标
+会在执行前再次跳过，不区分商品或合作项目。
 
 定向合作同步入口：
 
@@ -369,35 +354,36 @@ PYTHONPATH=ziniao-automation/src \
 联系任务也由独立 Worker 领取：
 
 ```bash
-.venv/bin/python web-ui/manage.py run_creator_contact_worker
+.venv/bin/python web-ui/manage.py run_creator_contact_worker --server-mode
 # 调试时只处理一个任务
 .venv/bin/python web-ui/manage.py run_creator_contact_worker --once
 ```
 
-默认联系执行器为每个冻结目标调用
-`python -m ziniao_automation.agent_runner --through-step 12`，并传入招呼语任务快照和
-三个确认参数。后台进程不会进入凭据交互提示：缺少环境变量时会明确失败。
+常驻模式固定监听 `127.0.0.1:16852/health`。Django 启动任务前先验证该健康响应，存在
+时不再创建 Worker，不存在时才启动。紫鸟 WebDriver 主进程固定监听 `16851`；每个执行
+子进程结束时仅停止本地 ChromeDriver 服务，保留店铺浏览器和紫鸟主进程，用户主动退出
+时才关闭。
 
-终态成功条件不是 Agent 最终回答，而是工具事件同时证明：
+默认联系执行器为每个冻结目标调用
+`python -m ziniao_automation.agent_runner --through-step 11`，并传入招呼语任务快照和
+两个确认参数。后台进程不会进入凭据交互提示：缺少环境变量时会明确失败。
+
+邀请中间阶段不是 Agent 最终回答，而是工具事件同时证明：
 
 - 招呼语已发送；
-- 邀请已创建并返回实际 `invitationId`；
-- 合作卡片已发送；
-- `targetPlanMessageVerified=true`；
-- `finalSendVerified=true`；
-- 实际 `invitationId` 非空。
+- `invitationButtonClicked=true` 或 `alreadySent=true`；
+- `creatorDetailTargetGone=true`；
 - `creatorTabsClosed=true`；
 - `searchTabKept=true`；
-- `returnedToFindCreators=true`。
+- `returnedToFindCreators=true`；
+- `findCreatorsSearchReady=true`。
 
-只有满足上述条件才创建或更新 `ContactedCreator`；失败、发送中和弱证据都不会标记
-“已联系”。每个成功目标会关闭对应达人详情与 `Cooperation Chat` 标签，并切回保留的
-查找达人标签，避免批量任务产生重复标签；任何清理证据缺失都按失败处理。
-
-邀请页面存在最终一致性延迟：如果点击后明确提示添加成功，但右侧卡片刷新后仍未
-出现，必须在每次刷新前随机等待 3–5 秒，最多刷新 3 次。三次仍不可见时返回
-`skipCreator=true`，关闭该达人详情和聊天标签并继续下一位；不得发送合作卡片、不得
-重复点击邀请，也不得将该达人写入已联系表。
+满足上述条件会记录 `INVITATION_COMPLETED` 并立即创建或更新店铺级
+`ContactedCreator`。全部邀请完成后，
+`accepted_card_runner --creators-json` 在一个进程、一个店铺浏览器和一个项目页中循环
+处理所有达人；每位达人必须精确存在于目标项目列表、聊天对象匹配，并在卡片发送后取得
+React 服务端消息 ID 与送达状态。这组终态证据只决定任务是否最终成功；找不到达人或
+证据不完整时保留邀请已完成状态，且该达人仍保持全局排除。
 
 当前真实 Top 3 测试状态：**尚未在本文档更新时宣告完成**。数据快照中的目标商品是
 最近一次成功采集任务的第三个商品（数据库商品 ID `13`，
@@ -406,8 +392,8 @@ external ID `1731795774080652206`）；当时按近 30 天销售额排序的前�
 店铺级去重和用户授权重新确认，不能把候选列表或单元测试当作真实联系成功。
 
 已创建的测试任务 ID 为 `2abbd920-d436-4a4a-87a8-7d34c1f7a8d5`。此前浏览器崩溃
-尝试均未产生远端写入：三个目标的 `message_sent`、`invitation_created`、
-`card_sent`、`final_send_verified` 仍全部为 `false`，`ContactedCreator` 中也没有
+尝试均未产生远端写入：三个目标的 `message_sent`、`invitation_created` 仍全部为
+`false`，`ContactedCreator` 中也没有
 这三个 handle。当前 WebDriver 主进程已恢复并通过模式校验，但官方 `startBrowser`
 仍要求本地提供 `ZINIAO_COMPANY`、`ZINIAO_USERNAME`、`ZINIAO_PASSWORD`；在凭据仅
 通过本地环境安全注入前，不得降级普通模式或宣告 Top 3 成功。
@@ -509,6 +495,9 @@ kill -INT <已确认的精确PID>
 - `ZINIAO_REQUEST_TIMEOUT_SECONDS`
 - `ZINIAO_CORE_TIMEOUT_SECONDS`
 - `ZINIAO_DRIVER_DIR`
+- `CREATOR_CONTACT_WORKER_HOST`
+- `CREATOR_CONTACT_WORKER_PORT`
+- `CREATOR_CONTACT_WORKER_START_TIMEOUT_SECONDS`
 - `DEEPSEEK_API_KEY`
 
 交互式 `agent_runner.py` 在变量缺失时可在本地终端提示输入，其中密码使用隐藏输入。
@@ -617,10 +606,10 @@ web-ui/creator_contact/management/commands/run_creator_contact_worker.py
    `金色拉链+短裤13` 的 `invitationGroupId`。
 4. 在 `/creator-contact/` 中复核第三个商品、Top 3 候选、招呼语快照、定向合作和三个
    写操作确认。
-5. 仅在用户已授权的三个目标上串行执行，逐个要求第 12 步 React 强终态；失败或不明确
-   时停止该目标，不盲点按钮。
-6. 验证只有真正成功目标写入 `ContactedCreator`，并记录实际
-   `invitationId`、共享 `invitationGroupId` 和计划卡片证据。
-7. 为 Windows 增加对应 MCP/Agent/Worker 启动脚本，并继续补充 DOM fixture。
+5. 仅在用户已授权的目标上串行完成邀请按钮点击与标签清理；失败或不明确时停止该目标，
+   不盲点按钮。
+6. 验证邀请按钮点击/幂等确认后立即写入 `ContactedCreator`；批量卡片阶段再精确核验
+   项目成员、聊天对象和服务端送达证据，不得用卡片失败撤销邀请去重。
+7. 为 Windows 增加对应 MCP/Agent/Worker 启动脚本，并继续补充页面 fixture。
 
 不要自动执行 commit、merge 或 push，除非用户在新会话中明确要求。

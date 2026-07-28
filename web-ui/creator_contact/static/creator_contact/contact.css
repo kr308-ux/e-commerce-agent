@@ -6,6 +6,11 @@
   font-weight: 500;
 }
 
+.detail-actions form {
+  display: flex;
+  margin: 0;
+}
+
 .contact-welcome {
   align-items: center;
 }

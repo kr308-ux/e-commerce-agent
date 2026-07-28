@@ -19,6 +19,11 @@ urlpatterns = [
         name="task_status",
     ),
     path(
+        "tasks/<uuid:task_id>/start/",
+        views.start_task,
+        name="start_task",
+    ),
+    path(
         "collaborations/sync/",
         views.sync_collaborations,
         name="sync_collaborations",

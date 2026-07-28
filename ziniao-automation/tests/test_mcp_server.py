@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -10,6 +12,7 @@ from ziniao_automation.mcp_server import (
     ContactAutomationState,
     ZiniaoContactMcpServer,
 )
+from ziniao_automation.models import StartedStore, StoreInfo
 
 
 class ZiniaoContactMcpServerTests(unittest.TestCase):
@@ -73,10 +76,8 @@ class ZiniaoContactMcpServerTests(unittest.TestCase):
         }
         greeting = tools["ziniao_send_greeting"]
         invitation = tools["ziniao_send_selected_invitation"]
-        card = tools["ziniao_send_collaboration_card"]
         self.assertTrue(greeting["annotations"]["destructiveHint"])
         self.assertTrue(invitation["annotations"]["destructiveHint"])
-        self.assertTrue(card["annotations"]["destructiveHint"])
         self.assertIs(
             greeting["inputSchema"]["properties"][
                 "confirmSendGreeting"
@@ -89,12 +90,7 @@ class ZiniaoContactMcpServerTests(unittest.TestCase):
             ]["const"],
             True,
         )
-        self.assertIs(
-            card["inputSchema"]["properties"][
-                "confirmSendCard"
-            ]["const"],
-            True,
-        )
+        self.assertNotIn("ziniao_send_collaboration_card", tools)
         self.assertNotIn(
             "creatorId",
             tools["ziniao_verify_chat_recipient"][
@@ -104,7 +100,6 @@ class ZiniaoContactMcpServerTests(unittest.TestCase):
         for tool_name in (
             "ziniao_select_invitation",
             "ziniao_send_selected_invitation",
-            "ziniao_send_collaboration_card",
         ):
             schema = tools[tool_name]["inputSchema"]
             self.assertIn("invitationGroupId", schema["required"])
@@ -113,7 +108,7 @@ class ZiniaoContactMcpServerTests(unittest.TestCase):
                 "^[0-9]+$",
             )
 
-    def test_recipient_verification_precedes_both_mutations(self) -> None:
+    def test_recipient_verification_precedes_mutations(self) -> None:
         self.assertLess(
             TOOL_ORDER.index("ziniao_verify_chat_recipient"),
             TOOL_ORDER.index("ziniao_send_greeting"),
@@ -122,10 +117,7 @@ class ZiniaoContactMcpServerTests(unittest.TestCase):
             TOOL_ORDER.index("ziniao_select_invitation"),
             TOOL_ORDER.index("ziniao_send_selected_invitation"),
         )
-        self.assertLess(
-            TOOL_ORDER.index("ziniao_send_selected_invitation"),
-            TOOL_ORDER.index("ziniao_send_collaboration_card"),
-        )
+        self.assertNotIn("ziniao_send_collaboration_card", TOOL_ORDER)
 
     def _bound_state(self) -> ContactAutomationState:
         state = ContactAutomationState()
@@ -198,6 +190,268 @@ class ZiniaoContactMcpServerTests(unittest.TestCase):
             )
         state.workflow.select_invitation.assert_not_called()
 
+    def test_runner_snapshot_rejects_model_changed_creator(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"ZINIAO_EXPECTED_CREATOR": "@catshrank"},
+        ):
+            state = ContactAutomationState()
+        state.workflow = Mock()
+
+        with self.assertRaisesRegex(
+            ZiniaoWorkflowError,
+            "不得更换目标达人",
+        ):
+            state._search_creator({"creator": "@catshrank_88"})
+
+        state.workflow.search_creator.assert_not_called()
+
+    def test_runner_snapshot_rejects_model_changed_store(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"ZINIAO_EXPECTED_STORE_ID": "27850427216664"},
+        ):
+            state = ContactAutomationState()
+
+        with self.assertRaisesRegex(
+            ZiniaoWorkflowError,
+            "固定店铺不一致",
+        ):
+            state._connect({"storeId": "wrong-store"})
+
+    def _connect_fixtures(
+        self,
+    ) -> tuple[Mock, StoreInfo, StartedStore, Mock, Mock, Mock]:
+        settings = Mock()
+        settings.browser_session_dir = Path("/tmp/ziniao-test-cache")
+        settings.browser_probe_timeout_seconds = 2
+        settings.browser_lock_timeout_seconds = 30
+        settings.reuse_browser_session = True
+        store = StoreInfo("store-1", "Demo", "secret")
+        started = StartedStore(
+            store=store,
+            debugging_port=9222,
+            core_version="146.1.4.29",
+            core_type="Chromium",
+            browser_path="",
+            launcher_page="",
+            ip_detection_page="",
+            download_path="",
+        )
+        client = Mock()
+        client.list_stores.return_value = [store]
+        lease = Mock()
+        lease_factory = Mock()
+        lease_factory.acquire.return_value = lease
+        session = Mock()
+        session.started = started
+        session.driver.current_url = (
+            "https://example.test/connection/creator"
+        )
+        session.driver.title = "Find creators"
+        return settings, store, started, client, lease_factory, session
+
+    def test_connect_reuses_live_cached_browser_without_starting(
+        self,
+    ) -> None:
+        (
+            settings,
+            _store,
+            started,
+            _client,
+            _lease_factory,
+            session,
+        ) = self._connect_fixtures()
+        connection = Mock(
+            session=session,
+            store=_store,
+            connection_mode="reused",
+            cache_persisted=True,
+        )
+        with (
+            patch(
+                "ziniao_automation.mcp_server.ZiniaoSettings.from_env",
+                return_value=settings,
+            ),
+            patch(
+                "ziniao_automation.mcp_server.connect_reusable_store",
+                return_value=connection,
+            ),
+            patch("ziniao_automation.mcp_server.CreatorContactWorkflow"),
+        ):
+            state = ContactAutomationState()
+            result = state._connect({"storeId": "store-1"})
+
+        self.assertEqual(result["connectionMode"], "reused")
+        self.assertTrue(result["browserSessionCachePersisted"])
+        state.close()
+        connection.close.assert_called_once()
+
+    def test_connect_starts_once_and_persists_cache_on_miss(
+        self,
+    ) -> None:
+        (
+            settings,
+            _store,
+            started,
+            _client,
+            _lease_factory,
+            session,
+        ) = self._connect_fixtures()
+        connection = Mock(
+            session=session,
+            store=_store,
+            connection_mode="started",
+            cache_persisted=True,
+        )
+        with (
+            patch(
+                "ziniao_automation.mcp_server.ZiniaoSettings.from_env",
+                return_value=settings,
+            ),
+            patch(
+                "ziniao_automation.mcp_server.connect_reusable_store",
+                return_value=connection,
+            ),
+            patch("ziniao_automation.mcp_server.CreatorContactWorkflow"),
+        ):
+            state = ContactAutomationState()
+            result = state._connect({"storeId": "store-1"})
+
+        self.assertEqual(result["connectionMode"], "started")
+        self.assertTrue(result["browserSessionCachePersisted"])
+        state.close()
+        connection.close.assert_called_once()
+
+    def test_runner_injects_exact_greeting_snapshot(self) -> None:
+        greeting = "Exact emoji sequence 🧘‍♀️"
+        greeting_sha256 = hashlib.sha256(
+            greeting.encode("utf-8")
+        ).hexdigest()
+        with patch.dict(
+            "os.environ",
+            {
+                "ZINIAO_EXPECTED_GREETING_B64": (
+                    base64.b64encode(greeting.encode("utf-8")).decode(
+                        "ascii"
+                    )
+                ),
+                "ZINIAO_EXPECTED_GREETING_SHA256": greeting_sha256,
+            },
+        ):
+            state = ContactAutomationState()
+        state.creator = "@creator"
+        state.creator_id = "7493994012378827459"
+        state.workflow = Mock()
+        state.workflow.send_greeting.return_value.to_dict.return_value = {
+            "success": True,
+            "evidence": {"messageSent": True},
+        }
+
+        state._send_greeting(
+            {
+                "creator": "@creator",
+                "creatorId": "7493994012378827459",
+                "greetingMessage": "Model-normalized emoji 🧘♀️",
+                "greetingSha256": greeting_sha256,
+                "confirmSendGreeting": True,
+            }
+        )
+
+        state.workflow.send_greeting.assert_called_once_with(
+            "@creator",
+            "7493994012378827459",
+            greeting,
+            confirm_send=True,
+            expected_sha256=greeting_sha256,
+        )
+
+    def test_runner_canonicalizes_crlf_snapshot_before_hash_check(
+        self,
+    ) -> None:
+        raw_greeting = "We’re ready\r\nUnicode 🧘‍♀️\rFinal line"
+        canonical = "We’re ready\nUnicode 🧘‍♀️\nFinal line"
+        raw_sha256 = hashlib.sha256(
+            raw_greeting.encode("utf-8")
+        ).hexdigest()
+        canonical_sha256 = hashlib.sha256(
+            canonical.encode("utf-8")
+        ).hexdigest()
+        with patch.dict(
+            "os.environ",
+            {
+                "ZINIAO_EXPECTED_GREETING_B64": base64.b64encode(
+                    raw_greeting.encode("utf-8")
+                ).decode("ascii"),
+                "ZINIAO_EXPECTED_GREETING_SHA256": raw_sha256,
+            },
+        ):
+            state = ContactAutomationState()
+        state.creator = "@creator"
+        state.creator_id = "7493994012378827459"
+        state.workflow = Mock()
+        state.workflow.send_greeting.return_value.to_dict.return_value = {
+            "success": True,
+            "evidence": {"messageSent": True},
+        }
+
+        state._send_greeting(
+            {
+                "creator": "@creator",
+                "creatorId": "7493994012378827459",
+                "greetingMessage": canonical,
+                "greetingSha256": canonical_sha256,
+                "confirmSendGreeting": True,
+            }
+        )
+
+        self.assertEqual(state.expected_greeting, canonical)
+        self.assertEqual(
+            state.expected_greeting_sha256,
+            canonical_sha256,
+        )
+        state.workflow.send_greeting.assert_called_once_with(
+            "@creator",
+            "7493994012378827459",
+            canonical,
+            confirm_send=True,
+            expected_sha256=canonical_sha256,
+        )
+
+    def test_first_tool_failure_closes_session_and_blocks_retries(
+        self,
+    ) -> None:
+        state = ContactAutomationState()
+        workflow = Mock()
+        workflow.search_creator.side_effect = ZiniaoWorkflowError(
+            "不可重试失败"
+        )
+        state.workflow = workflow
+        state._check_order = Mock()  # type: ignore[method-assign]
+
+        first = state.call(
+            "ziniao_search_creator",
+            {"creator": "@creator"},
+        )
+        second = state.call(
+            "ziniao_search_creator",
+            {"creator": "@creator"},
+        )
+
+        self.assertFalse(first["success"])
+        self.assertEqual(
+            first["error"]["code"],
+            "ZiniaoWorkflowError",
+        )
+        self.assertFalse(second["success"])
+        self.assertEqual(
+            second["error"]["code"],
+            "TASK_TERMINATED_AFTER_FAILURE",
+        )
+        self.assertTrue(state.should_exit)
+        self.assertIsNone(state.workflow)
+        workflow.search_creator.assert_called_once_with("@creator")
+
     def test_send_invitation_rejects_result_from_other_group(
         self,
     ) -> None:
@@ -232,7 +486,7 @@ class ZiniaoContactMcpServerTests(unittest.TestCase):
             confirm_send=True,
         )
 
-    def test_send_invitation_allows_explicit_skip_without_invitation_id(
+    def test_send_invitation_allows_completed_state_without_invitation_id(
         self,
     ) -> None:
         state = self._bound_state()
@@ -241,10 +495,15 @@ class ZiniaoContactMcpServerTests(unittest.TestCase):
         state.workflow.send_selected_invitation.return_value.to_dict.return_value = {
             "success": True,
             "evidence": {
-                "invitationId": "",
                 "invitationGroupId": "7664550207413847821",
-                "skipCreator": True,
-                "skipReason": "连续刷新三次仍未显示",
+                "invitationCompleted": True,
+                "invitationButtonClicked": True,
+                "invitationSubmissionConfirmed": True,
+                "creatorTabsClosed": True,
+                "creatorDetailTargetGone": True,
+                "searchTabKept": True,
+                "returnedToFindCreators": True,
+                "findCreatorsSearchReady": True,
             },
         }
 
@@ -258,65 +517,43 @@ class ZiniaoContactMcpServerTests(unittest.TestCase):
             }
         )
 
-        self.assertTrue(result["evidence"]["skipCreator"])
-        self.assertIsNone(state.invitation_id)
+        self.assertTrue(result["evidence"]["invitationCompleted"])
+        self.assertNotIn("invitationId", result["evidence"])
 
-    def test_card_rejects_changed_group_before_workflow_call(
+    def test_send_invitation_accepts_button_click_without_panel_confirmation(
         self,
     ) -> None:
         state = self._bound_state()
         state.invitation_name = "计划 A"
         state.invitation_group_id = "7664550207413847821"
-        state.invitation_id = "7666768491349280526"
-        with self.assertRaisesRegex(
-            ZiniaoWorkflowError,
-            "不得更换 invitationGroupId",
-        ):
-            state._send_collaboration_card(
-                {
-                    "creator": "@creator",
-                    "creatorId": "7493994012378827459",
-                    "invitationName": "计划 A",
-                    "invitationId": "7666768491349280526",
-                    "invitationGroupId": "9999999999999999999",
-                    "confirmSendCard": True,
-                }
-            )
-        state.workflow.send_collaboration_card.assert_not_called()
-
-    def test_card_rejects_result_from_other_group(self) -> None:
-        state = self._bound_state()
-        state.invitation_name = "计划 A"
-        state.invitation_group_id = "7664550207413847821"
-        state.invitation_id = "7666768491349280526"
-        state.workflow.send_collaboration_card.return_value.to_dict.return_value = {
+        state.workflow.send_selected_invitation.return_value.to_dict.return_value = {
             "success": True,
             "evidence": {
-                "invitationId": "7666768491349280526",
-                "invitationGroupId": "9999999999999999999",
+                "invitationGroupId": "7664550207413847821",
+                "invitationCompleted": True,
+                "invitationButtonClicked": True,
+                "invitationSubmissionConfirmed": False,
+                "creatorTabsClosed": True,
+                "creatorDetailTargetGone": True,
+                "searchTabKept": True,
+                "returnedToFindCreators": True,
+                "findCreatorsSearchReady": True,
             },
         }
-        with self.assertRaisesRegex(
-            ZiniaoWorkflowError,
-            "invitationGroupId",
-        ):
-            state._send_collaboration_card(
-                {
-                    "creator": "@creator",
-                    "creatorId": "7493994012378827459",
-                    "invitationName": "计划 A",
-                    "invitationId": "7666768491349280526",
-                    "invitationGroupId": "7664550207413847821",
-                    "confirmSendCard": True,
-                }
-            )
-        state.workflow.send_collaboration_card.assert_called_once_with(
-            "@creator",
-            "7493994012378827459",
-            "计划 A",
-            "7666768491349280526",
-            invitation_group_id="7664550207413847821",
-            confirm_send=True,
+
+        result = state._send_selected_invitation(
+            {
+                "creator": "@creator",
+                "creatorId": "7493994012378827459",
+                "invitationName": "计划 A",
+                "invitationGroupId": "7664550207413847821",
+                "confirmSendInvitation": True,
+            }
+        )
+
+        self.assertTrue(result["evidence"]["invitationCompleted"])
+        self.assertFalse(
+            result["evidence"]["invitationSubmissionConfirmed"]
         )
 
 

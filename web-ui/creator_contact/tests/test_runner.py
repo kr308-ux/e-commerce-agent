@@ -16,7 +16,9 @@ from unittest.mock import patch
 
 from creator_contact.services.contact_runner import (
     CreatorContactRunner,
+    SubprocessCardExecutor,
     SubprocessContactExecutor,
+    _exact_creator_unavailable,
 )
 from creator_contact.models import CollaborationSyncJob, DirectedCollaborationOption
 
@@ -31,17 +33,20 @@ class ContactRunnerTests(CreatorContactTestCase):
             "creatorId": f"700000000000000000{target.rank}",
             "messageSent": True,
             "invitationCreated": True,
+            "invitationCompleted": True,
+            "invitationButtonClicked": True,
+            "invitationSubmissionAttempted": True,
+            "invitationSubmissionConfirmed": True,
+            "invitationCompletionSource": "final_invite_button_click",
             "invitationSent": True,
-            "invitationId": f"766676849134928052{target.rank}",
             "invitationGroupId": task.invitation_id_snapshot,
-            "cardSent": True,
-            "targetPlanMessageVerified": True,
-            "planCardServerIds": [f"server-{target.rank}"],
-            "targetPlanFlightStatus": 3,
-            "finalSendVerified": True,
             "creatorTabsClosed": True,
+            "creatorDetailTabClosed": True,
+            "creatorDetailTargetGone": True,
+            "creatorChatTabClosed": True,
             "searchTabKept": True,
             "returnedToFindCreators": True,
+            "findCreatorsSearchReady": True,
             "sessionID": f"session-{target.rank}",
             "steps": [
                 {
@@ -54,17 +59,347 @@ class ContactRunnerTests(CreatorContactTestCase):
                     },
                 },
                 {
-                    "stepId": "send-card",
-                    "operation": "ziniao_send_collaboration_card",
-                    "label": "发送定向合作卡片",
+                    "stepId": "send-selected-invitation",
+                    "operation": "ziniao_send_selected_invitation",
+                    "label": "发送已选择邀请",
                     "status": "SUCCESS",
                     "outputSummary": {
-                        "cardSent": True,
-                        "finalSendVerified": True,
+                        "invitationCompleted": True,
+                        "invitationButtonClicked": True,
+                        "invitationSubmissionConfirmed": True,
                     },
                 },
             ],
         }
+
+    @staticmethod
+    def invitation_executor(task, target):
+        return {
+            "success": True,
+            "creatorId": f"700000000000000000{target.rank}",
+            "messageSent": True,
+            "invitationCreated": True,
+            "invitationCompleted": True,
+            "invitationButtonClicked": True,
+            "invitationSubmissionAttempted": True,
+            "invitationSubmissionConfirmed": True,
+            "invitationCompletionSource": "final_invite_button_click",
+            "invitationSent": True,
+            "invitationGroupId": task.invitation_id_snapshot,
+            "creatorTabsClosed": True,
+            "creatorDetailTabClosed": True,
+            "creatorDetailTargetGone": True,
+            "creatorChatTabClosed": True,
+            "searchTabKept": True,
+            "returnedToFindCreators": True,
+            "findCreatorsSearchReady": True,
+            "steps": [],
+        }
+
+    @staticmethod
+    def accepted_card_executor(task, target):
+        return {
+            "success": True,
+            "invitationId": f"766676849134928052{target.rank}",
+            "invitationGroupId": task.invitation_id_snapshot,
+            "cardSent": True,
+            "targetPlanMessageVerified": True,
+            "planCardServerIds": [f"accepted-server-{target.rank}"],
+            "targetPlanFlightStatus": 3,
+            "finalSendVerified": True,
+            "deliverySource": "accepted_creator_list",
+            "acceptedCreatorsPageVisible": True,
+            "projectMembershipVerified": True,
+            "recipientVerified": True,
+            "steps": [],
+        }
+
+    def test_invitation_then_card_runs_for_every_target(self):
+        task = self.create_contact_task(top_n=3)
+        freeze_task_targets(task)
+        events = []
+
+        def invite(current_task, target):
+            events.append(f"invite-{target.rank}")
+            return self.invitation_executor(current_task, target)
+
+        def card(current_task, target):
+            events.append(f"card-{target.rank}")
+            return self.accepted_card_executor(current_task, target)
+
+        result = CreatorContactRunner(
+            task,
+            executor=invite,
+            card_executor=card,
+        ).run()
+
+        self.assertEqual(
+            events,
+            [
+                "invite-1",
+                "invite-2",
+                "invite-3",
+                "card-1",
+                "card-2",
+                "card-3",
+            ],
+        )
+        self.assertEqual(result.status, CreatorContactTask.Status.SUCCESS)
+        self.assertEqual(
+            list(task.targets.values_list("status", flat=True)),
+            [CreatorContactTarget.Status.SUCCESS] * 3,
+        )
+        self.assertEqual(ContactedCreator.objects.count(), 3)
+        self.assertEqual(
+            result.final_summary["invitationCompletedCount"],
+            3,
+        )
+        self.assertEqual(result.final_summary["cardSentCount"], 3)
+        self.assertEqual(result.final_summary["cardPendingCount"], 0)
+
+    def test_card_batch_executor_is_called_once_for_all_targets(self):
+        task = self.create_contact_task(top_n=3)
+        freeze_task_targets(task)
+        calls = []
+
+        class BatchExecutor:
+            def __call__(self, *_args):
+                raise AssertionError("批量执行器不应退回逐达人调用")
+
+            def run_many(self, current_task, targets):
+                calls.append([target.normalized_handle for target in targets])
+                return {
+                    target.pk: ContactRunnerTests.accepted_card_executor(
+                        current_task,
+                        target,
+                    )
+                    for target in targets
+                }
+
+        result = CreatorContactRunner(
+            task,
+            executor=self.invitation_executor,
+            card_executor=BatchExecutor(),
+        ).run()
+
+        self.assertEqual(result.status, CreatorContactTask.Status.SUCCESS)
+        self.assertEqual(calls, [["highest", "middle", "low"]])
+        self.assertEqual(
+            list(task.targets.values_list("status", flat=True)),
+            [CreatorContactTarget.Status.SUCCESS] * 3,
+        )
+
+    def test_missing_creator_in_card_batch_stays_invitation_completed(self):
+        task = self.create_contact_task(top_n=2)
+        freeze_task_targets(task)
+
+        class PartialBatch:
+            def run_many(self, current_task, targets):
+                return {
+                    targets[0].pk: (
+                        ContactRunnerTests.accepted_card_executor(
+                            current_task,
+                            targets[0],
+                        )
+                    )
+                }
+
+        result = CreatorContactRunner(
+            task,
+            executor=self.invitation_executor,
+            card_executor=PartialBatch(),
+        ).run()
+        targets = list(task.targets.order_by("rank"))
+
+        self.assertEqual(
+            result.status,
+            CreatorContactTask.Status.PARTIAL_SUCCESS,
+        )
+        self.assertEqual(
+            targets[0].status,
+            CreatorContactTarget.Status.SUCCESS,
+        )
+        self.assertEqual(
+            targets[1].status,
+            CreatorContactTarget.Status.INVITATION_COMPLETED,
+        )
+        self.assertEqual(
+            targets[1].error_code,
+            "CARD_BATCH_RESULT_MISSING",
+        )
+        self.assertEqual(ContactedCreator.objects.count(), 2)
+        self.assertTrue(
+            ContactedCreator.objects.filter(
+                normalized_handle=targets[1].normalized_handle,
+            ).exists()
+        )
+        self.assertEqual(result.final_summary["cardPendingCount"], 1)
+
+    def test_lost_dom_receipt_is_not_recovered_by_membership(self):
+        task = self.create_contact_task(top_n=2)
+        freeze_task_targets(task)
+        events = []
+
+        def lost_receipt(current_task, target):
+            events.append(f"invite-{target.rank}")
+            return {
+                "success": False,
+                "creatorId": f"700000000000000000{target.rank}",
+                "messageSent": True,
+                "invitationCreated": False,
+                "invitationGroupId": current_task.invitation_id_snapshot,
+                "errorCode": "INVITATION_RECEIPT_LOST",
+                "errorMessage": "邀请弹窗已关闭但本地回执丢失",
+                "steps": [],
+            }
+
+        def membership(current_task, target):
+            events.append(f"membership-{target.rank}")
+            return {
+                "success": True,
+                "invitationGroupId": current_task.invitation_id_snapshot,
+                "invitationCompleted": True,
+                "invitationSubmitAcknowledged": True,
+                "acceptedCreatorsPageVisible": True,
+                "projectMembershipVerified": True,
+                "deliverySource": (
+                    "project_creator_details_reconciliation"
+                ),
+                "steps": [],
+            }
+
+        def card(current_task, target):
+            events.append(f"card-{target.rank}")
+            return self.accepted_card_executor(current_task, target)
+
+        result = CreatorContactRunner(
+            task,
+            executor=lost_receipt,
+            membership_executor=membership,
+            card_executor=card,
+        ).run()
+
+        self.assertEqual(events, ["invite-1", "invite-2"])
+        self.assertEqual(result.status, CreatorContactTask.Status.FAILED)
+        self.assertEqual(
+            list(task.targets.values_list("status", flat=True)),
+            [CreatorContactTarget.Status.FAILED] * 2,
+        )
+
+    def test_membership_and_card_executors_are_ignored(
+        self,
+    ):
+        task = self.create_contact_task(top_n=3)
+        freeze_task_targets(task)
+        events = []
+
+        def lost_receipt(current_task, target):
+            events.append(f"invite-{target.rank}")
+            return {
+                "success": False,
+                "creatorId": f"700000000000000000{target.rank}",
+                "messageSent": True,
+                "invitationCreated": True,
+                "invitationGroupId": current_task.invitation_id_snapshot,
+                "errorCode": "INVITATION_RECEIPT_LOST",
+                "errorMessage": "邀请回执不完整",
+                "steps": [],
+            }
+
+        def membership(current_task, target):
+            events.append(f"membership-{target.rank}")
+            if target.rank == 2:
+                return {
+                    "success": False,
+                    "projectMembershipVerified": False,
+                    "errorCode": "MEMBERSHIP_NOT_FOUND",
+                    "errorMessage": "项目列表未找到目标达人",
+                    "steps": [],
+                }
+            return {
+                "success": True,
+                "invitationGroupId": current_task.invitation_id_snapshot,
+                "invitationCompleted": True,
+                "invitationSubmitAcknowledged": True,
+                "acceptedCreatorsPageVisible": True,
+                "projectMembershipVerified": True,
+                "deliverySource": (
+                    "project_creator_details_reconciliation"
+                ),
+                "steps": [],
+            }
+
+        def card(current_task, target):
+            events.append(f"card-{target.rank}")
+            return self.accepted_card_executor(current_task, target)
+
+        result = CreatorContactRunner(
+            task,
+            executor=lost_receipt,
+            membership_executor=membership,
+            card_executor=card,
+        ).run()
+
+        self.assertEqual(events, ["invite-1", "invite-2", "invite-3"])
+        self.assertEqual(
+            list(
+                task.targets.order_by("rank").values_list(
+                    "status",
+                    flat=True,
+                )
+            ),
+            [
+                CreatorContactTarget.Status.FAILED,
+                CreatorContactTarget.Status.FAILED,
+                CreatorContactTarget.Status.FAILED,
+            ],
+        )
+        self.assertEqual(
+            result.status,
+            CreatorContactTask.Status.FAILED,
+        )
+        self.assertEqual(ContactedCreator.objects.count(), 0)
+
+    def test_existing_invitation_completed_targets_go_to_card_batch(self):
+        task = self.create_contact_task(top_n=2)
+        freeze_task_targets(task)
+        targets = list(task.targets.order_by("rank"))
+        for target in targets:
+            invitation_result = self.invitation_executor(task, target)
+            target.status = CreatorContactTarget.Status.INVITATION_COMPLETED
+            target.message_sent = True
+            target.invitation_created = True
+            target.invitation_group_id = task.invitation_id_snapshot
+            target.result = invitation_result
+            target.save()
+        calls = []
+
+        class BatchCard:
+            def __call__(self, *_args):
+                raise AssertionError("批量卡片不应退回逐达人调用")
+
+            def run_many(self, current_task, current_targets):
+                calls.append(
+                    [target.normalized_handle for target in current_targets]
+                )
+                return {
+                    target.pk: {
+                        **ContactRunnerTests.accepted_card_executor(
+                            current_task,
+                            target,
+                        )
+                    }
+                    for target in current_targets
+                }
+
+        result = CreatorContactRunner(
+            task,
+            executor=self.invitation_executor,
+            card_executor=BatchCard(),
+        ).run()
+
+        self.assertEqual(result.status, CreatorContactTask.Status.SUCCESS)
+        self.assertEqual(calls, [["highest", "middle"]])
 
     def test_serial_runner_persists_dynamic_ids_steps_and_history(self):
         task = self.create_contact_task(top_n=2)
@@ -73,13 +408,15 @@ class ContactRunnerTests(CreatorContactTestCase):
         result = CreatorContactRunner(
             task,
             executor=self.successful_executor,
+            card_executor=self.accepted_card_executor,
         ).run()
 
         self.assertEqual(result.status, CreatorContactTask.Status.SUCCESS)
         self.assertEqual(ContactedCreator.objects.count(), 2)
         self.assertEqual(task.steps.count(), 4)
         targets = list(task.targets.order_by("rank"))
-        self.assertTrue(all(target.final_send_verified for target in targets))
+        self.assertTrue(all(target.invitation_created for target in targets))
+        self.assertTrue(all(target.card_sent for target in targets))
         self.assertEqual(
             targets[0].chat_creator_id,
             "7000000000000000001",
@@ -90,7 +427,7 @@ class ContactRunnerTests(CreatorContactTestCase):
         )
         self.assertTrue(targets[0].target_plan_message_verified)
 
-    def test_success_without_final_card_proof_is_failed_and_not_deduped(self):
+    def test_success_without_invitation_click_proof_is_failed(self):
         task = self.create_contact_task(top_n=1)
         freeze_task_targets(task)
 
@@ -152,41 +489,74 @@ class ContactRunnerTests(CreatorContactTestCase):
         self.assertEqual(target.status, CreatorContactTarget.Status.SKIPPED)
         self.assertEqual(
             target.error_code,
-            "INVITATION_SYNC_NOT_VISIBLE",
+            "INVITATION_NOT_VERIFIED",
         )
         self.assertTrue(target.message_sent)
         self.assertFalse(target.invitation_created)
         self.assertFalse(ContactedCreator.objects.exists())
 
-    def test_terminal_success_rejects_weak_or_mismatched_server_evidence(self):
+    def test_button_click_is_deduped_even_when_panel_sync_times_out(self):
+        task = self.create_contact_task(top_n=1)
+        freeze_task_targets(task)
+
+        def clicked_executor(current_task, target):
+            return {
+                "success": True,
+                "creatorId": "7001",
+                "messageSent": True,
+                "invitationCreated": False,
+                "invitationCompleted": False,
+                "invitationButtonClicked": True,
+                "invitationGroupId": current_task.invitation_id_snapshot,
+                "creatorTabsClosed": True,
+                "creatorDetailTargetGone": True,
+                "searchTabKept": True,
+                "returnedToFindCreators": True,
+                "findCreatorsSearchReady": True,
+                "skipCreator": True,
+                "skipReason": "右侧合作卡片未同步",
+                "invitationSyncPending": True,
+                "steps": [],
+            }
+
+        CreatorContactRunner(task, executor=clicked_executor).run()
+        target = task.targets.get()
+        record = ContactedCreator.objects.get(
+            store_id=task.store_id,
+            normalized_handle=target.normalized_handle,
+        )
+
+        self.assertEqual(target.status, CreatorContactTarget.Status.SKIPPED)
+        self.assertEqual(
+            record.evidence["contactStage"],
+            "INVITATION_COMPLETED",
+        )
+        self.assertTrue(record.evidence["invitationButtonClicked"])
+
+    def test_invitation_phase_rejects_missing_click_or_cleanup_evidence(self):
         cases = (
             (
                 "group mismatch",
                 {"invitationGroupId": "7664550207413847999"},
                 "INVITATION_GROUP_MISMATCH",
+                False,
             ),
             (
-                "non-numeric invitation id",
-                {"invitationId": "actual-invitation-1"},
-                "INVALID_INVITATION_ID",
+                "missing final invitation click",
+                {
+                    "invitationButtonClicked": False,
+                },
+                "INVITATION_COMPLETION_NOT_VERIFIED",
+                False,
             ),
             (
-                "missing plan card server ids",
-                {"planCardServerIds": []},
-                "MISSING_PLAN_CARD_SERVER_IDS",
-            ),
-            (
-                "invalid target plan flight status",
-                {"targetPlanFlightStatus": 2},
-                "INVALID_TARGET_PLAN_FLIGHT_STATUS",
-            ),
-            (
-                "creator tabs not cleaned",
-                {"creatorTabsClosed": False},
-                "CREATOR_TABS_NOT_CLEANED",
+                "creator detail target still open",
+                {"creatorDetailTargetGone": False},
+                "INVITATION_COMPLETION_NOT_VERIFIED",
+                True,
             ),
         )
-        for label, replacement, expected_code in cases:
+        for label, replacement, expected_code, expected_contact in cases:
             with self.subTest(label=label):
                 task = self.create_contact_task(top_n=1)
                 freeze_task_targets(task)
@@ -196,7 +566,11 @@ class ContactRunnerTests(CreatorContactTestCase):
                     result.update(replacement)
                     return result
 
-                result = CreatorContactRunner(task, executor=executor).run()
+                result = CreatorContactRunner(
+                    task,
+                    executor=executor,
+                    card_executor=self.accepted_card_executor,
+                ).run()
                 target = task.targets.get()
 
                 self.assertEqual(
@@ -208,10 +582,11 @@ class ContactRunnerTests(CreatorContactTestCase):
                     CreatorContactTarget.Status.FAILED,
                 )
                 self.assertEqual(target.error_code, expected_code)
-                self.assertFalse(
+                self.assertEqual(
                     ContactedCreator.objects.filter(
                         contact_task=task,
-                    ).exists()
+                    ).exists(),
+                    expected_contact,
                 )
 
     def test_subprocess_executor_uses_full_flow_contract_and_parses_jsonl(self):
@@ -251,32 +626,37 @@ class ContactRunnerTests(CreatorContactTestCase):
         final_event = {
             "type": "text",
             "part": {
-                "text": json.dumps(
-                    {
-                        "success": True,
-                        "creatorId": "7493994012378827459",
-                        "messageSent": True,
-                        "invitationCreated": True,
-                        "invitationSent": True,
-                        "cardSent": True,
-                        "finalSendVerified": True,
-                    }
+                "text": (
+                    "All steps completed successfully.\n```json\n"
+                    + json.dumps(
+                        {
+                            "success": True,
+                            "creatorId": "7493994012378827459",
+                            "messageSent": True,
+                            "invitationCreated": True,
+                            "invitationCompleted": True,
+                            "invitationButtonClicked": True,
+                            "invitationSubmissionConfirmed": True,
+                            "invitationSent": True,
+                        }
+                    )
+                    + "\n```"
                 )
             },
         }
-        card_event = {
+        invitation_event = {
             "type": "tool_use",
             "sessionID": "session-live-shape",
             "part": {
                 "tool": (
                     "ziniao-contact_"
-                    "ziniao_send_collaboration_card"
+                    "ziniao_send_selected_invitation"
                 ),
                 "state": {
                     "status": "completed",
                     "input": {
                         "taskId": "test",
-                        "stepId": "send-collaboration-card",
+                        "stepId": "send-selected-invitation",
                         "creator": "@highest",
                     },
                     "output": json.dumps(
@@ -284,24 +664,25 @@ class ContactRunnerTests(CreatorContactTestCase):
                             "success": True,
                             "status": "SUCCESS",
                             "data": {
-                                "step": 12,
-                                "action": "send_collaboration_card",
+                                "step": 11,
+                                "action": "send_selected_invitation",
                                 "success": True,
                                 "evidence": {
-                                    "invitationId": (
-                                        "7666768491349280526"
-                                    ),
                                     "invitationGroupId": (
                                         "7664550207413847821"
                                     ),
-                                    "cardSent": True,
-                                    "finalSendVerified": True,
-                                    "targetPlanMessageVerified": True,
-                                    "planCardServerIds": ["server-1"],
-                                    "targetPlanFlightStatus": 3,
+                                    "messageSent": True,
+                                    "invitationCreated": True,
+                                    "invitationCompleted": True,
+                                    "invitationButtonClicked": True,
+                                    "invitationSubmissionAttempted": True,
+                                    "invitationSubmissionConfirmed": True,
+                                    "invitationSent": True,
                                     "creatorTabsClosed": True,
+                                    "creatorDetailTargetGone": True,
                                     "searchTabKept": True,
                                     "returnedToFindCreators": True,
+                                    "findCreatorsSearchReady": True,
                                 },
                             },
                             "error": None,
@@ -316,7 +697,7 @@ class ContactRunnerTests(CreatorContactTestCase):
             stdout=(
                 json.dumps(tool_event)
                 + "\n"
-                + json.dumps(card_event)
+                + json.dumps(invitation_event)
                 + "\n"
                 + json.dumps(final_event)
                 + "\n"
@@ -344,16 +725,18 @@ class ContactRunnerTests(CreatorContactTestCase):
             command[command.index("--invitation-group-id") + 1],
             task.invitation_id_snapshot,
         )
-        self.assertIn("--confirm-send-card", command)
-        self.assertEqual(command[command.index("--through-step") + 1], "12")
-        self.assertTrue(result["finalSendVerified"])
+        self.assertNotIn("--confirm-send-card", command)
+        self.assertEqual(command[command.index("--through-step") + 1], "11")
+        self.assertTrue(result["invitationCompleted"])
+        self.assertTrue(result["success"])
+        self.assertTrue(result["invitationButtonClicked"])
+        self.assertTrue(result["invitationSubmissionConfirmed"])
+        self.assertTrue(result["creatorDetailTargetGone"])
+        self.assertTrue(result["findCreatorsSearchReady"])
         self.assertEqual(result["creatorId"], "7493994012378827459")
         self.assertEqual(result["sessionID"], "session-live-shape")
-        self.assertEqual(
-            result["invitationId"],
-            "7666768491349280526",
-        )
-        self.assertTrue(result["targetPlanMessageVerified"])
+        self.assertNotIn("invitationId", result)
+        self.assertNotIn("finalSendVerified", result)
         self.assertEqual(len(result["steps"]), 2)
 
     def test_subprocess_parser_preserves_invitation_sync_skip_evidence(self):
@@ -396,6 +779,7 @@ class ContactRunnerTests(CreatorContactTestCase):
                                     "closedCreatorTabCount": 2,
                                     "searchTabKept": True,
                                     "returnedToFindCreators": True,
+                                    "findCreatorsSearchReady": True,
                                     "findCreatorsUrl": (
                                         "https://example.test/"
                                         "connection/creator"
@@ -441,6 +825,150 @@ class ContactRunnerTests(CreatorContactTestCase):
         self.assertEqual(result["closedCreatorTabCount"], 2)
         self.assertTrue(result["searchTabKept"])
         self.assertTrue(result["returnedToFindCreators"])
+        self.assertTrue(result["findCreatorsSearchReady"])
+
+    def test_subprocess_parser_ignores_non_mcp_list_output(self):
+        unauthorized_event = {
+            "type": "tool_use",
+            "part": {
+                "tool": "bash",
+                "state": {
+                    "status": "completed",
+                    "input": {"command": "not-run-by-contact-parser"},
+                    "output": json.dumps([{"unexpected": "shape"}]),
+                },
+            },
+        }
+        disconnect_event = {
+            "type": "tool_use",
+            "part": {
+                "tool": "ziniao-contact_ziniao_disconnect",
+                "state": {
+                    "status": "completed",
+                    "input": {"stepId": "disconnect"},
+                    "output": json.dumps(
+                        {
+                            "success": True,
+                            "status": "SUCCESS",
+                            "data": {"disconnected": True},
+                            "error": None,
+                        }
+                    ),
+                },
+            },
+        }
+
+        result = SubprocessContactExecutor._parse_output(
+            json.dumps(unauthorized_event)
+            + "\n"
+            + json.dumps(disconnect_event)
+        )
+
+        self.assertEqual(len(result["steps"]), 1)
+        self.assertEqual(
+            result["steps"][0]["operation"],
+            "ziniao_disconnect",
+        )
+
+    def test_card_batch_executor_opens_project_once_for_all_targets(self):
+        task = self.create_contact_task(top_n=2)
+        freeze_task_targets(task)
+        targets = list(task.targets.order_by("rank"))
+        output = {
+            "success": True,
+            "projectOpenedOnce": True,
+            "projectOpenCount": 1,
+            "steps": [
+                {
+                    "action": "open_project_accepted_creators",
+                    "success": True,
+                    "evidence": {"acceptedCreatorsPageVisible": True},
+                }
+            ],
+            "results": [
+                {
+                    **self.accepted_card_executor(task, target),
+                    "creator": f"@{target.normalized_handle}",
+                }
+                for target in targets
+            ],
+        }
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(output) + "\n",
+            stderr="",
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "ZINIAO_COMPANY": "test-company",
+                "ZINIAO_USERNAME": "test-user",
+                "ZINIAO_PASSWORD": "test-password",
+            },
+        ), patch(
+            "creator_contact.services.contact_runner.subprocess.run",
+            return_value=completed,
+        ) as run:
+            results = SubprocessCardExecutor().run_many(task, targets)
+
+        command = run.call_args.args[0]
+        self.assertIn("--creators-json", command)
+        creators = json.loads(
+            command[command.index("--creators-json") + 1]
+        )
+        self.assertEqual(creators, ["@highest", "@middle"])
+        self.assertEqual(run.call_count, 1)
+        self.assertTrue(results[targets[0].pk]["cardSent"])
+        self.assertTrue(results[targets[1].pk]["finalSendVerified"])
+        self.assertEqual(
+            results[targets[0].pk]["steps"][0]["operation"],
+            "open_project_accepted_creators",
+        )
+
+    def test_exact_creator_safety_failure_is_skippable(self):
+        self.assertTrue(
+            _exact_creator_unavailable(
+                {
+                    "messageSent": False,
+                    "errorMessage": (
+                        "第 2 步被安全门阻止：等待后候选项"
+                        "不再是精确目标 @catshrank。"
+                    ),
+                }
+            )
+        )
+        self.assertFalse(
+            _exact_creator_unavailable(
+                {
+                    "messageSent": True,
+                    "errorMessage": "候选项不再是精确目标",
+                }
+            )
+        )
+        self.assertTrue(
+            _exact_creator_unavailable(
+                {
+                    "messageSent": False,
+                    "errorMessage": (
+                        "第 2 步跳过：输入 @catshrank 后"
+                        "未出现精确同名候选项。"
+                    ),
+                }
+            )
+        )
+        self.assertTrue(
+            _exact_creator_unavailable(
+                {
+                    "messageSent": False,
+                    "errorMessage": (
+                        "聊天对象验收失败：聊天页顶部未显示"
+                        "目标达人用户名。"
+                    ),
+                }
+            )
+        )
 
 
 class CollaborationSyncRunnerTests(CreatorContactTestCase):

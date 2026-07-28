@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -9,6 +12,7 @@ from django.db.models import Count
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from tasks.models import CreatorAcquisitionTask, Product
@@ -25,6 +29,11 @@ from .services.candidate_selector import (
     candidate_payload,
     freeze_task_targets,
     select_candidates,
+)
+from .services.worker_runtime import (
+    WORKER_WAITING_STEP,
+    wait_for_worker_endpoint,
+    worker_endpoint_ready,
 )
 
 
@@ -295,6 +304,9 @@ def task_detail(
             "contact_task": contact_task,
             "targets": targets,
             "steps": steps,
+            "invitation_completed_count": targets.filter(
+                invitation_created=True
+            ).count(),
             "task_count": CreatorAcquisitionTask.objects.count(),
         },
     )
@@ -323,12 +335,123 @@ def task_status(
             "successCount": counts[CreatorContactTarget.Status.SUCCESS],
             "failedCount": counts[CreatorContactTarget.Status.FAILED],
             "skippedCount": counts[CreatorContactTarget.Status.SKIPPED],
+            "invitationCompletedCount": contact_task.targets.filter(
+                invitation_created=True
+            ).count(),
+            "cardSentCount": contact_task.targets.filter(
+                card_sent=True,
+                final_send_verified=True,
+            ).count(),
+            "cardPendingCount": counts[
+                CreatorContactTarget.Status.INVITATION_COMPLETED
+            ],
             "updatedAt": contact_task.updated_at.isoformat(),
             "detailUrl": reverse(
                 "creator_contact:task_detail",
                 kwargs={"task_id": contact_task.pk},
             ),
         }
+    )
+
+
+@require_POST
+def start_task(
+    request: HttpRequest,
+    task_id,
+) -> HttpResponse:
+    """Claim one pending task and launch its worker from the Django UI."""
+    with transaction.atomic():
+        contact_task = get_object_or_404(
+            CreatorContactTask.objects.select_for_update(),
+            pk=task_id,
+        )
+        if contact_task.status != CreatorContactTask.Status.PENDING:
+            payload = {
+                "success": False,
+                "error": "只有等待中的联系达人任务可以启动。",
+                "status": contact_task.status,
+            }
+            if "application/json" in request.headers.get("Accept", ""):
+                return JsonResponse(payload, status=409)
+            return redirect(
+                "creator_contact:task_detail",
+                task_id=contact_task.pk,
+            )
+        contact_task.status = CreatorContactTask.Status.RUNNING
+        contact_task.current_step = WORKER_WAITING_STEP
+        contact_task.started_at = timezone.now()
+        contact_task.finished_at = None
+        contact_task.error_code = ""
+        contact_task.error_message = ""
+        contact_task.save()
+
+    worker_host = settings.CREATOR_CONTACT_WORKER_HOST
+    worker_port = settings.CREATOR_CONTACT_WORKER_PORT
+    worker_reused = worker_endpoint_ready(worker_host, worker_port)
+    command = None
+    try:
+        if not worker_reused:
+            manage_py = Path(settings.BASE_DIR) / "manage.py"
+            command = [
+                settings.AUTOMATION_PYTHON_EXECUTABLE,
+                str(manage_py),
+                "run_creator_contact_worker",
+                "--server-mode",
+                "--control-host",
+                worker_host,
+                "--control-port",
+                str(worker_port),
+            ]
+            subprocess.Popen(
+                command,
+                cwd=settings.PROJECT_ROOT,
+                close_fds=True,
+                start_new_session=True,
+            )
+            if not wait_for_worker_endpoint(
+                worker_host,
+                worker_port,
+                timeout_seconds=(
+                    settings.CREATOR_CONTACT_WORKER_START_TIMEOUT_SECONDS
+                ),
+            ):
+                raise OSError(
+                    "常驻达人联系 Worker 未在限定时间内监听固定端口。"
+                )
+    except OSError as error:
+        contact_task.status = CreatorContactTask.Status.FAILED
+        contact_task.current_step = "Django 服务端启动自动化失败"
+        contact_task.error_code = "CONTACT_WORKER_START_FAILED"
+        contact_task.error_message = str(error)
+        contact_task.finished_at = timezone.now()
+        contact_task.save()
+        if "application/json" in request.headers.get("Accept", ""):
+            return JsonResponse(
+                {
+                    "success": False,
+                    "error": contact_task.error_message,
+                    "status": contact_task.status,
+                },
+                status=500,
+            )
+    if "application/json" in request.headers.get("Accept", ""):
+        return JsonResponse(
+            {
+                "success": True,
+                "taskId": str(contact_task.pk),
+                "status": contact_task.status,
+                "workerReused": worker_reused,
+                "workerEndpoint": f"http://{worker_host}:{worker_port}/health",
+                "statusUrl": reverse(
+                    "creator_contact:task_status",
+                    kwargs={"task_id": contact_task.pk},
+                ),
+            },
+            status=202,
+        )
+    return redirect(
+        "creator_contact:task_detail",
+        task_id=contact_task.pk,
     )
 
 

@@ -66,7 +66,7 @@ class CreatorContactTaskForm(forms.ModelForm):
         required=True,
     )
     confirm_send_card = forms.BooleanField(
-        label="确认点击邀请卡片发送",
+        label="确认批量发送定向合作卡片",
         required=True,
     )
 

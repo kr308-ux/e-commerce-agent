@@ -43,6 +43,12 @@
         </div>
         <div class="detail-actions">
             <a class="secondary-button" href="{% url 'creator_contact:dashboard' %}">返回达人联系</a>
+            {% if contact_task.status == 'PENDING' %}
+            <form method="post" action="{% url 'creator_contact:start_task' contact_task.id %}">
+                {% csrf_token %}
+                <button type="submit" class="create-button compact">从 Django 启动测试</button>
+            </form>
+            {% endif %}
             <button type="button" class="create-button compact" data-refresh-page>刷新进度 ↻</button>
         </div>
     </section>
@@ -89,7 +95,7 @@
                 <span class="section-kicker">CURRENT STEP</span>
                 <h2>{{ contact_task.current_step|default:"等待达人联系 Worker" }}</h2>
                 <p>
-                    每位达人均独立核验聊天对象、招呼语、定向合作邀请和最终卡片发送结果。
+                    邀请阶段逐个核验；发送阶段只进入一次项目达人详情页，再依次处理全部达人。
                 </p>
                 <div class="wide-progress">
                     <span style="width: {{ contact_task.progress|default:'0' }}%"></span>
@@ -115,6 +121,7 @@
                         {% endif %}
                     </dd>
                 </div>
+                <div><dt>邀请完成</dt><dd>{{ invitation_completed_count|default:"0" }}</dd></div>
                 <div><dt>成功</dt><dd>{{ contact_task.final_summary.successCount|default:"0" }}</dd></div>
                 <div><dt>失败</dt><dd>{{ contact_task.final_summary.failedCount|default:"0" }}</dd></div>
                 <div><dt>跳过</dt><dd>{{ contact_task.final_summary.skippedCount|default:"0" }}</dd></div>
@@ -167,13 +174,12 @@
                         <td>
                             <div class="target-delivery-state">
                                 <span class="{% if target.message_sent %}is-complete{% endif %}">招呼语</span>
-                                <span class="{% if target.invitation_created %}is-complete{% endif %}">邀请</span>
-                                <span class="{% if target.target_plan_message_verified %}is-complete{% endif %}">合作消息</span>
-                                <span class="{% if target.card_sent %}is-complete{% endif %}">卡片</span>
-                                <span class="{% if target.final_send_verified %}is-complete{% endif %}">最终验收</span>
+                                <span class="{% if target.invitation_created %}is-complete{% endif %}">邀请按钮</span>
+                                <span class="{% if target.result.projectMembershipVerified %}is-complete{% endif %}">项目达人</span>
+                                <span class="{% if target.final_send_verified %}is-complete{% endif %}">合作卡片</span>
                             </div>
-                            {% if target.actual_invitation_id %}
-                            <small class="block-muted">邀请 ID {{ target.actual_invitation_id }}</small>
+                            {% if target.status == "INVITATION_COMPLETED" %}
+                            <small class="block-muted">邀请已完成，等待/重试批量卡片阶段</small>
                             {% endif %}
                         </td>
                         <td>

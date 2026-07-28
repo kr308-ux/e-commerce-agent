@@ -18,8 +18,11 @@
 10. `ziniao_open_other_invitation_dialog`
 11. `ziniao_select_invitation`
 12. `ziniao_send_selected_invitation`
-13. `ziniao_send_collaboration_card`
-14. `ziniao_disconnect`
+13. `ziniao_disconnect`
+
+`ziniao_connect` 必须优先附加已通过端口和 DevTools browser UUID 验证的店铺
+浏览器。`ziniao_open_find_creators` 必须优先通过 CDP 激活已有查找达人标签页；
+复用成功时不得刷新页面、重新进入联盟或重新打开查找达人页。
 
 搜索步骤必须先输入达人用户名并点击输入框下方的精确候选项，再下滑验收同一页面中的
 搜索结果卡片。打开详情步骤只能点击搜索结果卡片，不能再次点击下拉候选项。
@@ -36,20 +39,17 @@
 - 只能精确选择任务指定的定向合作邀请，名称与 `invitationGroupId` 必须同时
   匹配。选择步骤不得点击最终“邀请”按钮。
 - 最终发送邀请必须等待所有前置步骤成功，并显式传入
-  `confirmSendInvitation=true`；发送后必须验收弹窗关闭和成功证据。
-- 创建邀请后必须取得达人专属 `invitationId`，再调用
-  `ziniao_send_collaboration_card`；必须显式传入 `confirmSendCard=true`。
-- 如果页面提示邀请添加成功，但右侧卡片尚未出现，必须每次随机等待 3–5 秒后刷新，
-  最多刷新 3 次。三次后仍不可见则返回 `skipCreator=true`，关闭本达人详情和聊天
-  标签，调用 `ziniao_disconnect` 并跳过该达人；不得调用合作卡片发送工具或重复点击
-  邀请，也不得写入已联系表。
-- 合作卡只有在刷新后读到本人发送的同一 `invitationId` 的 `targetPlan` 消息、
-  非空服务端消息 ID 且 `flightStatus` 为成功终态时，才算最终成功。
-- 最终工具必须同时返回 `creatorTabsClosed=true`、`searchTabKept=true` 和
-  `returnedToFindCreators=true`，证明已关闭本达人详情与聊天标签并切回查找达人
-  标签；缺少任何一项都不能标记成功或写入已联系表。
-- 对已经可见的相同消息、合作邀请或成功合作卡不得重复发送；发送中、失败或
-  状态不明时必须停止并等待人工复核。
+  `confirmSendInvitation=true`；只点击一次最终邀请按钮，不扫描可能瞬间消失的
+  toast，不等待右侧合作卡片同步，也不得重复点击。
+- 邀请按钮点击调用成功返回后立即进入清理步骤。邀请发送工具必须同时返回
+  `invitationButtonClicked=true`（或 `alreadySent=true`）、
+  `creatorDetailTargetGone=true`、`creatorTabsClosed=true`、
+  `searchTabKept=true`、`returnedToFindCreators=true` 和
+  `findCreatorsSearchReady=true`，证明已关闭本达人详情与聊天标签、切回查找达人页。
+- 最终邀请按钮点击成功或确认已有同一邀请后，必须立即写入店铺级达人去重记录；
+  后续无论商品或合作项目都排除。批量卡片证据只决定任务终态，不影响邀请去重。
+- 对已经可见的相同消息或合作邀请不得重复发送；发送中、失败或状态不明时必须
+  停止并等待人工复核。
 
 如果当前任务未明确授予某项发送确认，必须在对应发送工具之前停止正常流程并安全
 调用 `ziniao_disconnect`。
