@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from ziniao_automation.actions.collaboration_sync import (
     IN_PROGRESS,
@@ -41,6 +41,25 @@ def snapshot(
 
 
 class TargetCollaborationSyncTests(unittest.TestCase):
+    def test_read_only_click_waits_random_one_to_two_seconds(self) -> None:
+        driver = Mock()
+        element = Mock()
+        workflow = TargetCollaborationSync(driver)
+        with (
+            patch(
+                "ziniao_automation.actions.collaboration_sync.random.uniform",
+                return_value=1.625,
+            ) as uniform,
+            patch(
+                "ziniao_automation.actions.collaboration_sync.time.sleep"
+            ) as sleep,
+        ):
+            workflow._click_read_only(element)
+
+        uniform.assert_called_once_with(1.0, 2.0)
+        sleep.assert_called_once_with(1.625)
+        element.click.assert_called_once_with()
+
     def test_record_maps_service_fields_and_preserves_raw_data(self) -> None:
         raw = record("7664550207413847821", "金色拉链+短裤13")
 

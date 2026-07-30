@@ -6,7 +6,7 @@
 {% block topbar_title %}达人联系{% endblock %}
 {% block topbar_subtitle %}<small class="contact-topbar-subtitle">配置与执行</small>{% endblock %}
 {% block extra_head %}
-<link rel="stylesheet" href="{% static 'creator_contact/contact.css' %}">
+<link rel="stylesheet" href="{% static 'creator_contact/contact.css' %}?v=20260730-layout2">
 {% endblock %}
 {% block topbar_primary %}
 <a class="topbar-primary" href="#contact-task-create">
@@ -21,15 +21,35 @@
         <p class="eyebrow">CREATOR OUTREACH</p>
         <h1>达人联系</h1>
         <p class="welcome-copy">
-            从已采集商品中选择高销售额达人，使用已保存的招呼语和店铺定向合作方案创建联系任务。
+            可按达人 ID、销售额或手动勾选达人，完成达人选择后直接创建联系任务。
         </p>
     </div>
-    <div class="contact-store-card" aria-label="当前店铺">
-        <span class="contact-store-icon" aria-hidden="true">Z</span>
-        <span>
-            <small>当前紫鸟店铺</small>
-            <strong>{{ store_id|default:"尚未选择" }}</strong>
-        </span>
+    <div class="contact-store-stack">
+        <div class="contact-store-card" aria-label="当前店铺">
+            <span class="contact-store-icon" aria-hidden="true">Z</span>
+            <span>
+                <small>当前紫鸟店铺</small>
+                <strong>{{ store_id|default:"尚未选择" }}</strong>
+            </span>
+        </div>
+        <div
+            class="contact-browser-status{% if browser_status.ready %} is-ready{% else %} is-unavailable{% endif %}"
+            data-browser-status
+            data-status-url="{% url 'creator_contact:browser_status' %}"
+            aria-live="polite"
+        >
+            <i aria-hidden="true"></i>
+            <span>
+                <strong data-browser-status-label>{{ browser_status.statusLabel }}</strong>
+                <small data-browser-status-detail>
+                    {% if browser_status.ready %}
+                        {{ browser_status.connectionModeLabel }} · 端口 {{ browser_status.debuggingPort }}
+                    {% else %}
+                        {{ browser_status.errorMessage }}
+                    {% endif %}
+                </small>
+            </span>
+        </div>
     </div>
 </section>
 
@@ -45,7 +65,7 @@
         <small>来自当前店铺</small>
     </article>
     <article class="contact-metric">
-        <span>可用采集任务</span>
+        <span>可用导入批次</span>
         <strong>{{ source_tasks|length|stringformat:"02d" }}</strong>
         <small>仅展示成功入库的数据</small>
     </article>
@@ -87,53 +107,100 @@
             </span>
         </div>
 
-        <div class="contact-field-grid">
-            <div class="contact-field">
-                <label>
-                    紫鸟店铺 ID
-                    <small>联系记录按店铺隔离</small>
-                </label>
+        <div class="store-collaboration-layout">
+            <article class="selection-config-card store-config-card">
+                <div class="selection-config-heading">
+                    <span class="selection-config-index">01</span>
+                    <span>
+                        <strong>当前紫鸟店铺</strong>
+                        <small>联系记录与达人去重按店铺隔离</small>
+                    </span>
+                </div>
                 {{ form.store_id }}
-                <div class="contact-readonly-value">{{ store_id|default:"尚未配置店铺" }}</div>
+                <div class="store-identity">
+                    <span class="store-identity-mark" aria-hidden="true">Z</span>
+                    <span>
+                        <small>店铺 ID</small>
+                        <strong>{{ store_id|default:"尚未配置店铺" }}</strong>
+                    </span>
+                    <span class="store-selection-state">
+                        {% if store_id %}已选择{% else %}待配置{% endif %}
+                    </span>
+                </div>
                 {% if form.store_id.errors %}<p class="form-error">{{ form.store_id.errors|join:"；" }}</p>{% endif %}
-            </div>
-            <div class="contact-field">
-                <label for="{{ form.collaboration_option.id_for_label }}">
-                    {{ form.collaboration_option.label|default:"定向合作选项" }}
-                    <small>仅使用当前同步结果</small>
-                </label>
-                {{ form.collaboration_option }}
+                <p class="selection-config-help">
+                    本任务的定向合作、联系历史和防重复记录都将归属该店铺。
+                </p>
+            </article>
+
+            <article class="selection-config-card collaboration-config-card">
+                <div class="selection-config-heading">
+                    <span class="selection-config-index">02</span>
+                    <span>
+                        <strong>选择定向合作方案</strong>
+                        <small>仅使用当前店铺已同步且进行中的方案</small>
+                    </span>
+                </div>
+
+                <div class="collaboration-control-grid">
+                    <div class="contact-field">
+                        <span class="field-label">
+                            模糊搜索
+                            <small>名称或 ID</small>
+                        </span>
+                        <div class="collaboration-search">
+                            <input
+                                type="search"
+                                placeholder="输入合作名称或 ID"
+                                autocomplete="off"
+                                data-collaboration-search
+                                aria-label="搜索定向合作选项"
+                            >
+                            <small data-collaboration-search-state>
+                                {{ collaboration_options|length }} 个可用
+                            </small>
+                        </div>
+                    </div>
+                    <div class="contact-field">
+                        <label for="{{ form.collaboration_option.id_for_label }}">
+                            {{ form.collaboration_option.label|default:"定向合作选项" }}
+                            <small>选择最终方案</small>
+                        </label>
+                        {{ form.collaboration_option }}
+                    </div>
+                </div>
                 {% if form.collaboration_option.errors %}<p class="form-error">{{ form.collaboration_option.errors|join:"；" }}</p>{% endif %}
-            </div>
+
+                <div class="contact-sync-row">
+                    <div>
+                        <span class="status-dot {% if collaboration_options %}status-dot-live{% else %}status-dot-warning{% endif %}"></span>
+                        <span>
+                            <strong>同步状态</strong>
+                            <small>
+                                {% if sync_status %}
+                                    {{ sync_status.get_status_display|default:sync_status.status }}
+                                    {% if sync_status.error_message %} · {{ sync_status.error_message }}{% endif %}
+                                {% else %}
+                                    尚未同步当前店铺的定向合作
+                                {% endif %}
+                            </small>
+                        </span>
+                    </div>
+                    <button
+                        class="secondary-button contact-sync-button"
+                        type="submit"
+                        name="action"
+                        value="sync_collaborations"
+                        formaction="{% url 'creator_contact:sync_collaborations' %}"
+                        formnovalidate
+                    >
+                        同步进行中合作 ↻
+                    </button>
+                </div>
+            </article>
         </div>
 
-        <div class="contact-sync-row">
-            <div>
-                <span class="status-dot {% if collaboration_options %}status-dot-live{% else %}status-dot-warning{% endif %}"></span>
-                <span>
-                    <strong>同步状态</strong>
-                    <small>
-                        {% if sync_status %}
-                            {{ sync_status.get_status_display|default:sync_status.status }}
-                            {% if sync_status.error_message %} · {{ sync_status.error_message }}{% endif %}
-                        {% else %}
-                            尚未同步当前店铺的定向合作
-                        {% endif %}
-                    </small>
-                </span>
-            </div>
-            <button
-                class="secondary-button contact-sync-button"
-                type="submit"
-                name="action"
-                value="sync_collaborations"
-                formaction="{% url 'creator_contact:sync_collaborations' %}"
-                formnovalidate
-            >
-                同步进行中合作 ↻
-            </button>
-        </div>
-
+        {% comment %}
         {% if collaboration_options %}
         <div class="collaboration-strip" aria-label="已同步的定向合作">
             {% for option in collaboration_options %}
@@ -150,6 +217,7 @@
             {% endfor %}
         </div>
         {% endif %}
+        {% endcomment %}
     </section>
 
     <section class="panel contact-step" aria-labelledby="contact-step-greeting">
@@ -236,69 +304,117 @@
         <div class="contact-step-heading">
             <span class="contact-step-number">3</span>
             <div>
-                <span class="section-kicker">PRODUCT &amp; CREATORS</span>
-                <h2 id="contact-step-targets">选择商品与高销售额达人</h2>
-                <p>先排除当前店铺已联系达人，再按近 30 天销售额从高到低选取前 N 名。</p>
+                <span class="section-kicker">CREATOR SELECTION &amp; CREATE</span>
+                <h2 id="contact-step-targets">达人选择</h2>
+                <p>选择数据批次和筛选规则，确认最终达人名单及全部远端操作后直接创建联系任务。</p>
             </div>
-            <span class="contact-step-state" data-candidate-summary>
-                {{ candidate_preview|length }} 位待联系
-            </span>
+            <div class="contact-step-actions">
+                <span class="contact-step-state" data-candidate-summary>
+                    {% if selection_method == "MANUAL" %}{{ manually_selected_count }}{% else %}{{ candidate_preview|length }}{% endif %} 位已选择
+                </span>
+                <button class="create-button compact" type="submit" data-create-contact-task>
+                    创建联系任务 <span aria-hidden="true">→</span>
+                </button>
+            </div>
         </div>
 
-        <div class="contact-field-grid contact-field-grid-three">
-            <div class="contact-field">
-                <label for="id_source_task">
-                    达人数据采集任务
-                    <small>默认使用最近成功任务</small>
-                </label>
-                <select id="id_source_task" data-source-task-select>
-                    <option value="">请选择成功的采集任务</option>
-                    {% for source_task in source_tasks %}
-                    <option
-                        value="{{ source_task.pk }}"
-                        {% if forloop.first %}selected{% endif %}
+        <fieldset class="selection-rule-fieldset">
+            <legend>达人筛选规则</legend>
+            <div class="selection-rule-grid">
+                <label class="selection-rule-card">
+                    <input
+                        type="radio"
+                        name="selection_method"
+                        value="CREATOR_ID"
+                        {% if form.selection_method.value == "CREATOR_ID" %}checked{% endif %}
                     >
-                        #{{ source_task.pk|stringformat:"s"|slice:":8" }} ·
-                        {{ source_task.created_at|date:"m-d H:i" }} ·
-                        {{ source_task.product_count|default:source_task.products.count }} 个商品
+                    <span>
+                        <strong>按达人 ID</strong>
+                        <small>自动全选表格候选人，最多 50 位</small>
+                    </span>
+                </label>
+                <label class="selection-rule-card">
+                    <input
+                        type="radio"
+                        name="selection_method"
+                        value="SALES"
+                        {% if form.selection_method.value == "SALES" or not form.selection_method.value %}checked{% endif %}
+                    >
+                    <span>
+                        <strong>按销售额</strong>
+                        <small>按近 7 天、近 30 天或总销售额倒序</small>
+                    </span>
+                </label>
+                <label class="selection-rule-card">
+                    <input
+                        type="radio"
+                        name="selection_method"
+                        value="MANUAL"
+                        {% if form.selection_method.value == "MANUAL" %}checked{% endif %}
+                    >
+                    <span>
+                        <strong>手动勾选</strong>
+                        <small>从批次达人列表中自行勾选</small>
+                    </span>
+                </label>
+            </div>
+            {% if form.selection_method.errors %}<p class="form-error">{{ form.selection_method.errors|join:"；" }}</p>{% endif %}
+        </fieldset>
+
+        <div class="contact-field-grid creator-source-grid">
+            <div class="contact-field">
+                <label for="id_source_import_task">
+                    {{ form.source_import_task.label|default:"达人导入批次" }}
+                    <small>仅显示已完成或部分完成的确认导入</small>
+                </label>
+                <select id="id_source_import_task" name="source_import_task" data-import-task-select required>
+                    <option value="">请选择导入批次</option>
+                    {% for import_batch in import_batches %}
+                    <option
+                        value="{{ import_batch.pk }}"
+                        {% if form.source_import_task.value|stringformat:"s" == import_batch.pk|stringformat:"s" or selected_import_task.pk == import_batch.pk %}selected{% endif %}
+                    >
+                        {{ import_batch.file_name|truncatechars:56 }} ·
+                        {{ import_batch.creator_count }} 位达人 ·
+                        {{ import_batch.created_at|date:"m-d H:i" }}
                     </option>
                     {% endfor %}
                 </select>
+                {% if form.source_import_task.errors %}<p class="form-error">{{ form.source_import_task.errors|join:"；" }}</p>{% endif %}
             </div>
 
-            <div class="contact-field">
-                <label for="id_source_product">
-                    {{ form.source_product.label|default:"关联商品" }}
-                    <small>按采集页面原始顺序</small>
-                </label>
-                <select id="id_source_product" name="source_product" data-product-select required>
-                    <option value="">请选择商品</option>
-                    {% regroup products by task as product_task_groups %}
-                    {% for product_group in product_task_groups %}
-                    <optgroup label="#{{ product_group.grouper.pk|stringformat:'s'|slice:':8' }} · {{ product_group.grouper.created_at|date:'m-d H:i' }}">
-                        {% for product in product_group.list %}
-                        <option
-                            value="{{ product.pk }}"
-                            data-source-task="{{ product.task_id }}"
-                            data-product-label="{{ product.name }}"
-                            {% if form.source_product.value|stringformat:"s" == product.pk|stringformat:"s" %}selected{% endif %}
-                        >
-                            第 {{ forloop.counter }} 个 · {{ product.name|truncatechars:64 }}
-                        </option>
-                        {% endfor %}
-                    </optgroup>
-                    {% endfor %}
-                </select>
-                {% if form.source_product.errors %}<p class="form-error">{{ form.source_product.errors|join:"；" }}</p>{% endif %}
+            <div class="selection-method-panel manual-selection-hint" data-selection-panel="CREATOR_ID" hidden>
+                <strong>自动全选该表格候选人</strong>
+                <small>按导入顺序选择尚未联系且包含达人 ID 的候选人，最多 50 位。</small>
             </div>
 
-            <div class="contact-field">
+            <div class="sales-selection-fields selection-method-panel" data-selection-panel="SALES">
+                <div class="contact-field">
+                    <label for="id_sales_window_days">
+                        {{ form.sales_window_days.label }}
+                        <small>选定周期后倒序排名</small>
+                    </label>
+                    <select id="id_sales_window_days" name="sales_window_days" data-sales-window>
+                        <option value="7" {% if form.sales_window_days.value|stringformat:"s" == "7" %}selected{% endif %}>近 7 天销售额</option>
+                        <option value="30" {% if form.sales_window_days.value|stringformat:"s" == "30" or not form.sales_window_days.value %}selected{% endif %}>近 30 天销售额</option>
+                        <option value="0" {% if form.sales_window_days.value|stringformat:"s" == "0" %}selected{% endif %}>总销售额</option>
+                    </select>
+                    {% if form.sales_window_days.errors %}<p class="form-error">{{ form.sales_window_days.errors|join:"；" }}</p>{% endif %}
+                </div>
+                <div class="contact-field">
                 <label for="{{ form.top_n.id_for_label }}">
                     {{ form.top_n.label|default:"联系人数" }}
-                    <small>从未联系达人中选取</small>
+                        <small>最多 100 位</small>
                 </label>
                 {{ form.top_n }}
                 {% if form.top_n.errors %}<p class="form-error">{{ form.top_n.errors|join:"；" }}</p>{% endif %}
+                </div>
+            </div>
+
+            <div class="selection-method-panel manual-selection-hint" data-selection-panel="MANUAL" hidden>
+                <strong>请在下方列表勾选达人</strong>
+                <small>列表按导入顺序展示；单个任务最多选择 100 位。</small>
+                {% if form.selected_creator_ids.errors %}<p class="form-error">{{ form.selected_creator_ids.errors|join:"；" }}</p>{% endif %}
             </div>
         </div>
 
@@ -306,7 +422,7 @@
             <div class="candidate-preview-heading">
                 <div>
                     <strong>候选达人预览</strong>
-                    <small>销售额相同则按用户名稳定排序</small>
+                    <small data-candidate-rule-copy>按所选规则生成最终联系名单</small>
                 </div>
                 <div>
                     <span class="candidate-excluded">
@@ -319,21 +435,32 @@
                 <table class="data-table candidate-table">
                     <thead>
                         <tr>
+                            <th data-manual-only hidden>选择</th>
                             <th>排名</th>
                             <th>达人</th>
                             <th>近 7 天销售额</th>
                             <th>近 30 天销售额</th>
-                            <th>关联视频</th>
+                            <th>总销售额</th>
                             <th>状态</th>
                         </tr>
                     </thead>
                     <tbody data-candidate-body>
                         {% for candidate in candidate_preview %}
                         <tr>
+                            <td data-manual-only hidden>
+                                <input
+                                    class="candidate-checkbox"
+                                    type="checkbox"
+                                    name="selected_creator_ids"
+                                    value="{{ candidate.pk }}"
+                                    aria-label="选择 {{ candidate.nickname|default:candidate.creator_id }}"
+                                    {% if candidate.manually_selected %}checked{% endif %}
+                                >
+                            </td>
                             <td><span class="candidate-rank">{{ candidate.rank|default:forloop.counter }}</span></td>
                             <td>
-                                <strong>{{ candidate.nickname|default:candidate.creator_handle }}</strong>
-                                <small class="block-muted">@{{ candidate.creator_handle }}</small>
+                                <strong>{{ candidate.nickname|default:candidate.creator_id }}</strong>
+                                <small class="block-muted">@{{ candidate.creator_id }}</small>
                             </td>
                             <td>
                                 {% if candidate.recent_7_day_revenue != None %}
@@ -345,89 +472,23 @@
                                     <strong>${{ candidate.recent_30_day_revenue }}</strong>
                                 {% else %}—{% endif %}
                             </td>
-                            <td>{{ candidate.related_video_count|default_if_none:"—" }}</td>
+                            <td>
+                                {% if candidate.total_revenue != None %}
+                                    <strong>${{ candidate.total_revenue }}</strong>
+                                {% else %}—{% endif %}
+                            </td>
                             <td><span class="candidate-ready"><i></i>待联系</span></td>
                         </tr>
                         {% empty %}
                         <tr data-candidate-empty>
-                            <td colspan="6" class="empty-cell">选择采集任务、商品和人数后预览候选达人。</td>
+                            <td colspan="7" class="empty-cell">选择导入批次和筛选规则后预览候选达人。</td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
             </div>
         </div>
-    </section>
 
-    <section class="panel contact-step contact-confirm-step" aria-labelledby="contact-step-confirm">
-        <div class="contact-step-heading">
-            <span class="contact-step-number">4</span>
-            <div>
-                <span class="section-kicker">REVIEW &amp; CREATE</span>
-                <h2 id="contact-step-confirm">确认并创建联系任务</h2>
-                <p>Worker 将逐位核验聊天对象、发送招呼语并创建定向合作邀请；任一步失败都会停止该达人流程并记录证据。</p>
-            </div>
-            <span class="contact-step-state">最终确认</span>
-        </div>
-
-        <div class="execution-summary">
-            <div>
-                <span aria-hidden="true">✓</span>
-                <p><strong>自动跳过已联系达人</strong><small>按店铺与规范化 @handle 去重</small></p>
-            </div>
-            <div>
-                <span aria-hidden="true">✓</span>
-                <p><strong>两阶段校验发送结果</strong><small>邀请按钮点击后，再从项目达人列表批量发送卡片</small></p>
-            </div>
-            <div>
-                <span aria-hidden="true">✓</span>
-                <p><strong>消息与合作均保存快照</strong><small>任务执行期间配置不会漂移</small></p>
-            </div>
-        </div>
-
-        <label class="execution-confirm execution-confirm-all">
-            <input type="checkbox" data-confirm-all>
-            <span>
-                <strong>确认全部远端发送操作</strong>
-                <small>勾选后会同时确认下列三个独立安全门；也可逐项确认。</small>
-            </span>
-        </label>
-        <div class="execution-confirm-grid">
-            <label class="execution-confirm" for="{{ form.confirm_send_greeting.id_for_label }}">
-                {{ form.confirm_send_greeting }}
-                <span>
-                    <strong>{{ form.confirm_send_greeting.label }}</strong>
-                    <small>向每位候选达人真实发送所选招呼语。</small>
-                </span>
-            </label>
-            <label class="execution-confirm" for="{{ form.confirm_send_invitation.id_for_label }}">
-                {{ form.confirm_send_invitation }}
-                <span>
-                    <strong>{{ form.confirm_send_invitation.label }}</strong>
-                    <small>选择并创建指定的定向合作邀请。</small>
-                </span>
-            </label>
-            <label class="execution-confirm" for="{{ form.confirm_send_card.id_for_label }}">
-                {{ form.confirm_send_card }}
-                <span>
-                    <strong>{{ form.confirm_send_card.label }}</strong>
-                    <small>邀请阶段结束后，在精确项目达人列表中批量发送合作卡片。</small>
-                </span>
-            </label>
-        </div>
-        {% if form.confirm_send_greeting.errors %}<p class="form-error">{{ form.confirm_send_greeting.errors|join:"；" }}</p>{% endif %}
-        {% if form.confirm_send_invitation.errors %}<p class="form-error">{{ form.confirm_send_invitation.errors|join:"；" }}</p>{% endif %}
-        {% if form.confirm_send_card.errors %}<p class="form-error">{{ form.confirm_send_card.errors|join:"；" }}</p>{% endif %}
-
-        <div class="contact-submit-row">
-            <p>
-                <span class="status-dot status-dot-live"></span>
-                独立 Agent Worker 执行 · Django 请求仅创建任务
-            </p>
-            <button class="create-button contact-create-button" type="submit" data-create-contact-task>
-                创建联系任务 <span aria-hidden="true">→</span>
-            </button>
-        </div>
     </section>
 </form>
 
@@ -443,7 +504,7 @@
             <thead>
                 <tr>
                     <th>任务</th>
-                    <th>商品</th>
+                    <th>导入批次</th>
                     <th>目标达人</th>
                     <th>状态</th>
                     <th>进度</th>
@@ -460,7 +521,7 @@
                             <strong>{{ contact_task.name|default:"联系达人" }}</strong>
                         </a>
                     </td>
-                    <td>{{ contact_task.source_product.name|truncatechars:42 }}</td>
+                    <td>{{ contact_task.source_import_task.file_name|truncatechars:42 }}</td>
                     <td>{{ contact_task.targets.count|default:contact_task.top_n }} 位</td>
                     <td>
                         <span class="status-pill status-{{ contact_task.status|lower }}">
@@ -500,5 +561,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'creator_contact/contact.js' %}" defer></script>
+<script src="{% static 'creator_contact/contact.js' %}?v=20260730-layout2" defer></script>
 {% endblock %}

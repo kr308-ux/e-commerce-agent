@@ -50,6 +50,32 @@ class ZiniaoProcessManagerTests(unittest.TestCase):
                 manager.start()
         self.assertIn("普通工作台模式被禁止", str(captured.exception))
 
+    def test_prewarm_restarts_only_an_incompatible_main_process(self) -> None:
+        manager = build_manager()
+        with (
+            patch.object(manager, "_main_process_running", return_value=True),
+            patch.object(manager, "webdriver_mode_running", return_value=False),
+            patch.object(manager, "stop") as stop,
+            patch.object(manager, "start") as start,
+        ):
+            manager.ensure_started(restart_incompatible=True)
+
+        stop.assert_called_once_with()
+        start.assert_called_once_with()
+
+    def test_prewarm_preserves_an_existing_webdriver_process(self) -> None:
+        manager = build_manager()
+        with (
+            patch.object(manager, "_main_process_running", return_value=True),
+            patch.object(manager, "webdriver_mode_running", return_value=True),
+            patch.object(manager, "stop") as stop,
+            patch.object(manager, "start") as start,
+        ):
+            manager.ensure_started(restart_incompatible=True)
+
+        stop.assert_not_called()
+        start.assert_called_once_with()
+
     def test_webdriver_mode_matches_all_required_arguments(self) -> None:
         manager = build_manager()
         expected = (

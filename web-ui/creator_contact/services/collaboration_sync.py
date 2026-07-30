@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,7 @@ from creator_contact.models import (
     CollaborationSyncJob,
     DirectedCollaborationOption,
 )
+from shared.logger import JsonlAuditLogger, project_log_root
 
 
 class CollaborationSyncCapabilityError(RuntimeError):
@@ -101,6 +103,23 @@ class SubprocessCollaborationExecutor:
             str(store_id),
             "--json",
         ]
+        audit_logger = JsonlAuditLogger(
+            root=project_log_root(settings.PROJECT_ROOT),
+            category="regular",
+            component="collaboration-sync",
+            task_id=str(store_id),
+        )
+        started_at = time.perf_counter()
+        audit_logger.write(
+            "subprocess_started",
+            status="STARTED",
+            operation="collaboration_sync_runner",
+            input_content={
+                "command": command,
+                "storeId": str(store_id),
+                "timeoutSeconds": self.timeout_seconds,
+            },
+        )
         try:
             completed = subprocess.run(
                 command,
@@ -113,9 +132,46 @@ class SubprocessCollaborationExecutor:
                 check=False,
             )
         except subprocess.TimeoutExpired as error:
+            audit_logger.write(
+                "subprocess_finished",
+                status="TIMEOUT",
+                operation="collaboration_sync_runner",
+                input_content={
+                    "command": command,
+                    "storeId": str(store_id),
+                },
+                output_content={
+                    "stdout": error.stdout or "",
+                    "stderr": error.stderr or "",
+                },
+                error={
+                    "type": type(error).__name__,
+                    "message": str(error),
+                },
+                duration_ms=(time.perf_counter() - started_at) * 1000,
+            )
             raise CollaborationSyncCapabilityError(
                 "定向合作同步子进程执行超时。"
             ) from error
+        audit_logger.write(
+            "subprocess_finished",
+            status=(
+                "SUCCESS"
+                if completed.returncode == 0
+                else "FAILED"
+            ),
+            operation="collaboration_sync_runner",
+            input_content={
+                "command": command,
+                "storeId": str(store_id),
+            },
+            output_content={
+                "returnCode": completed.returncode,
+                "stdout": completed.stdout,
+                "stderr": completed.stderr,
+            },
+            duration_ms=(time.perf_counter() - started_at) * 1000,
+        )
         try:
             payload = self._last_json_payload(completed.stdout)
         except CollaborationSyncCapabilityError:

@@ -45,6 +45,7 @@ class ReusableStoreConnection:
     lease: StoreBrowserLease
     connection_mode: str
     cache_persisted: bool
+    cache: BrowserSessionCache
     _closed: bool = False
 
     def close(self) -> None:
@@ -125,4 +126,5 @@ def connect_reusable_store(
         lease=lease,
         connection_mode=connection_mode,
         cache_persisted=cache_persisted,
+        cache=cache,
     )

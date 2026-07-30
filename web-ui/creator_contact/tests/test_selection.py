@@ -1,4 +1,7 @@
 from django.core.exceptions import ValidationError
+from django.utils import timezone
+
+from tasks.models import ImportTask
 
 from creator_contact.models import ContactedCreator
 from creator_contact.services.candidate_selector import (
@@ -25,24 +28,107 @@ class CandidateSelectionTests(CreatorContactTestCase):
         )
 
         selection = select_candidates(
-            product=self.product,
+            import_task=self.import_task,
             store_id=self.store_id,
             top_n=3,
         )
 
         self.assertEqual(selection.excluded_count, 1)
         self.assertEqual(
-            [creator.creator_handle for creator in selection.creators],
+            [creator.creator_id for creator in selection.creators],
             ["@Middle", "low", "null_revenue"],
         )
+
+    def test_sales_ranking_supports_7_day_and_total_revenue(self):
+        for creator, amount in (
+            (self.high, 20),
+            (self.middle, 900),
+            (self.low, 100),
+        ):
+            self.create_creator(
+                creator.creator_id,
+                creator.nickname,
+                revenue_30=None,
+                revenue_7=None,
+                revenue_total=amount,
+                row=creator.import_memberships.get(
+                    import_task=self.import_task
+                ).first_row_number,
+            )
+
+        seven_day = select_candidates(
+            import_task=self.import_task,
+            store_id=self.store_id,
+            top_n=3,
+            sales_window_days=7,
+        )
+        total = select_candidates(
+            import_task=self.import_task,
+            store_id=self.store_id,
+            top_n=3,
+            sales_window_days=0,
+        )
+
+        self.assertEqual(
+            [creator.creator_id for creator in seven_day.creators],
+            ["null_revenue", "low", "@Middle"],
+        )
+        self.assertEqual(
+            [creator.creator_id for creator in total.creators],
+            ["@Middle", "low", "Highest"],
+        )
+
+    def test_creator_id_selects_batch_in_import_order_and_manual_preserves_order(self):
+        by_id = select_candidates(
+            import_task=self.import_task,
+            store_id=self.store_id,
+            selection_method="CREATOR_ID",
+        )
+        manual = select_candidates(
+            import_task=self.import_task,
+            store_id=self.store_id,
+            selection_method="MANUAL",
+            selected_creator_pks=[
+                str(self.middle.pk),
+                str(self.high.pk),
+            ],
+        )
+
+        self.assertEqual(
+            [creator.creator_id for creator in by_id.creators],
+            ["Highest", "@Middle", "low", "null_revenue"],
+        )
+        self.assertEqual(by_id.unmatched_identifiers, ())
+        self.assertEqual(
+            [creator.creator_id for creator in manual.creators],
+            ["@Middle", "Highest"],
+        )
+
+    def test_creator_id_rule_selects_at_most_50_candidates(self):
+        for index in range(51):
+            self.create_creator(
+                f"extra-{index:02d}",
+                f"Extra {index:02d}",
+                revenue_30=None,
+                revenue_7=None,
+                row=10 + index,
+            )
+
+        selection = select_candidates(
+            import_task=self.import_task,
+            store_id=self.store_id,
+            selection_method="CREATOR_ID",
+        )
+
+        self.assertEqual(selection.available_count, 55)
+        self.assertEqual(len(selection.creators), 50)
 
     def test_freezes_rank_handle_and_revenue_snapshots(self):
         task = self.create_contact_task(top_n=2)
         freeze_task_targets(task)
 
-        self.high.creator_handle = "changed_after_creation"
-        self.high.recent_30_day_revenue = 1
-        self.high.save()
+        self.high.creator_id = "changed_after_creation"
+        self.high.save(update_fields=["creator_id", "updated_at"])
 
         targets = list(task.targets.order_by("rank"))
         self.assertEqual([target.rank for target in targets], [1, 2])
@@ -145,22 +231,26 @@ class CandidateSelectionTests(CreatorContactTestCase):
         target.save()
         record_invited_creator(target)
 
-        other_product = self.product.__class__.objects.create(
-            task=self.acquisition_task,
-            external_product_id="other-product",
-            name="Other Product",
-            product_url="https://example.test/other-product",
+        other_import = ImportTask.objects.create(
+            file_name="other-import.xlsx",
+            file_sha256="b" * 64,
+            sheet_name="Creators",
+            status=ImportTask.Status.SUCCESS,
+            snapshot_date=timezone.localdate(),
+            confirmed_at=timezone.now(),
+            finished_at=timezone.now(),
         )
-        self.high.__class__.objects.create(
-            product=other_product,
-            creator_handle="@Highest",
-            nickname="Same creator on another project",
-            recent_30_day_revenue=999,
-            recent_7_day_revenue=999,
+        self.create_creator(
+            "@Highest",
+            "Same creator on another import",
+            revenue_30=999,
+            revenue_7=999,
+            row=2,
+            import_task=other_import,
         )
 
         selection = select_candidates(
-            product=other_product,
+            import_task=other_import,
             store_id=self.store_id,
             top_n=3,
         )

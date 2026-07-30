@@ -6,7 +6,12 @@ import base64
 import json
 import os
 import sys
+import time
+import uuid
+from pathlib import Path
 from typing import Any, Callable
+
+from shared.logger import JsonlAuditLogger, project_log_root
 
 from .actions.creator_contact import CreatorContactWorkflow
 from .browser_connection import (
@@ -14,6 +19,7 @@ from .browser_connection import (
     connect_reusable_store,
 )
 from .config import ZiniaoSettings
+from .dom_fallback import DeepSeekDomFallback
 from .errors import (
     ZiniaoError,
     ZiniaoWorkflowError,
@@ -391,6 +397,62 @@ class ContactAutomationState:
         self.terminal_failure: dict[str, Any] | None = None
         self.failed_tool_name: str | None = None
         self.should_exit = False
+        self.task_id = ""
+        self.session_id = (
+            os.getenv("ZINIAO_RUN_SESSION_ID", "").strip()
+            or f"mcp_{uuid.uuid4().hex}"
+        )
+        project_root = Path(__file__).resolve().parents[3]
+        self.audit_logger = JsonlAuditLogger(
+            root=project_log_root(project_root),
+            category="regular",
+            component="creator-contact",
+            session_id=self.session_id,
+        )
+
+    def _bind_audit_context(self, arguments: dict[str, Any]) -> None:
+        task_id = str(arguments.get("taskId") or "").strip()
+        if task_id:
+            self.task_id = task_id
+            self.audit_logger.bind(task_id=task_id)
+
+    def _browser_context(self) -> dict[str, Any]:
+        if self.workflow is None:
+            return {}
+        try:
+            return {
+                "currentUrl": self.workflow.driver.current_url,
+                "title": self.workflow.driver.title,
+                "windowCount": len(self.workflow.driver.window_handles),
+            }
+        except Exception as error:
+            return {"contextError": type(error).__name__}
+
+    def _logged_result(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: dict[str, Any],
+        started_at: float,
+        source: str = "executed",
+    ) -> dict[str, Any]:
+        success = result.get("success") is True
+        self.audit_logger.write(
+            "operation_finished",
+            status="SUCCESS" if success else "FAILED",
+            task_id=self.task_id,
+            session_id=self.session_id,
+            operation=tool_name,
+            input_content=arguments,
+            output_content=result,
+            duration_ms=(time.perf_counter() - started_at) * 1000,
+            metadata={
+                "source": source,
+                "browser": self._browser_context(),
+            },
+        )
+        return result
 
     def _safe_message(self, error: Exception) -> str:
         message = str(error)
@@ -506,21 +568,56 @@ class ContactAutomationState:
             )
 
     def call(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        started_at = time.perf_counter()
+        self._bind_audit_context(arguments)
+        self.audit_logger.write(
+            "operation_started",
+            status="STARTED",
+            task_id=self.task_id,
+            session_id=self.session_id,
+            operation=tool_name,
+            input_content=arguments,
+            metadata={"browser": self._browser_context()},
+        )
         if tool_name not in TOOL_ORDER:
-            return _failure("UNKNOWN_TOOL", f"未知工具：{tool_name}")
+            return self._logged_result(
+                tool_name=tool_name,
+                arguments=arguments,
+                result=_failure("UNKNOWN_TOOL", f"未知工具：{tool_name}"),
+                started_at=started_at,
+                source="rejected",
+            )
         if self.terminal_failure is not None:
             if tool_name == "ziniao_disconnect":
-                return _success({"disconnected": True})
-            return _failure(
-                "TASK_TERMINATED_AFTER_FAILURE",
-                (
-                    "任务已因工具 "
-                    f"{self.failed_tool_name or 'unknown'} "
-                    "发生不可重试错误而终止，不得重复发送或继续后续步骤。"
+                return self._logged_result(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    result=_success({"disconnected": True}),
+                    started_at=started_at,
+                    source="terminal_disconnect",
+                )
+            return self._logged_result(
+                tool_name=tool_name,
+                arguments=arguments,
+                result=_failure(
+                    "TASK_TERMINATED_AFTER_FAILURE",
+                    (
+                        "任务已因工具 "
+                        f"{self.failed_tool_name or 'unknown'} "
+                        "发生不可重试错误而终止，不得重复发送或继续后续步骤。"
+                    ),
                 ),
+                started_at=started_at,
+                source="terminal_rejected",
             )
         if tool_name in self.completed:
-            return self.completed[tool_name]
+            return self._logged_result(
+                tool_name=tool_name,
+                arguments=arguments,
+                result=self.completed[tool_name],
+                started_at=started_at,
+                source="cached",
+            )
         try:
             self._check_order(tool_name)
             handlers: dict[str, Callable[[], dict[str, Any]]] = {
@@ -556,24 +653,71 @@ class ContactAutomationState:
                 ),
                 "ziniao_disconnect": self._disconnect,
             }
-            result = _success(handlers[tool_name]())
+            data = handlers[tool_name]()
+            if self.workflow is not None:
+                fallback_events = (
+                    self.workflow.consume_dom_fallback_events()
+                )
+                evidence = (
+                    data.get("evidence")
+                    if isinstance(data, dict)
+                    else None
+                )
+                if fallback_events and isinstance(evidence, dict):
+                    evidence["domFallbackUsed"] = True
+                    evidence["domFallbackEvents"] = fallback_events
+            result = _success(data)
             self.completed[tool_name] = result
-            return result
+            return self._logged_result(
+                tool_name=tool_name,
+                arguments=arguments,
+                result=result,
+                started_at=started_at,
+            )
         except ZiniaoError as error:
-            return self._terminate_after_failure(
-                tool_name,
-                _failure(
-                    type(error).__name__,
-                    self._safe_message(error),
+            diagnosis = (
+                self.workflow.diagnose_dom_failure(
+                    step_name=tool_name,
+                    error_message=self._safe_message(error),
+                )
+                if self.workflow is not None
+                else {}
+            )
+            failure = _failure(
+                type(error).__name__,
+                self._safe_message(error),
+            )
+            if diagnosis:
+                failure["error"]["domFallback"] = diagnosis
+            if self.workflow is not None:
+                fallback_events = (
+                    self.workflow.consume_dom_fallback_events()
+                )
+                if fallback_events:
+                    failure["error"]["domFallbackEvents"] = (
+                        fallback_events
+                    )
+            return self._logged_result(
+                tool_name=tool_name,
+                arguments=arguments,
+                result=self._terminate_after_failure(
+                    tool_name,
+                    failure,
                 ),
+                started_at=started_at,
             )
         except Exception as error:
-            return self._terminate_after_failure(
-                tool_name,
-                _failure(
-                    "UNEXPECTED_ERROR",
-                    self._safe_message(error),
+            return self._logged_result(
+                tool_name=tool_name,
+                arguments=arguments,
+                result=self._terminate_after_failure(
+                    tool_name,
+                    _failure(
+                        "UNEXPECTED_ERROR",
+                        self._safe_message(error),
+                    ),
                 ),
+                started_at=started_at,
             )
 
     def _terminate_after_failure(
@@ -612,6 +756,10 @@ class ContactAutomationState:
         self.workflow = CreatorContactWorkflow(
             session.driver,
             timeout_seconds=60,
+            dom_fallback=DeepSeekDomFallback.from_env(
+                task_id=self.task_id,
+                session_id=self.session_id,
+            ),
         )
         return {
             "connected": True,

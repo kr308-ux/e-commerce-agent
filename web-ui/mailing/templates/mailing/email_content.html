@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Email preview</title>
+</head>
+<body style="margin:0;padding:0;background:#f5f5f5;color:#222;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f5f5f5;">
+    <tr>
+      <td align="center" style="padding:24px 12px;">
+        <table role="presentation" width="680" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:680px;background:#fff;border-radius:10px;">
+          <tr>
+            <td style="padding:32px;font-size:16px;line-height:1.65;">
+              {% if rich_html %}
+                {{ rich_html|safe }}
+              {% else %}
+              {% for block in blocks %}
+                {% if block.type == "text" %}
+                  {% if block.style == "heading" %}
+                    <p style="font-weight:bold;margin:24px 0 8px;">{{ block.text|linebreaksbr }}</p>
+                  {% else %}
+                    <p style="margin:0 0 16px;">{{ block.text|linebreaksbr }}</p>
+                  {% endif %}
+                {% elif block.type == "link" %}
+                  <p style="margin:5px 0 16px;">
+                    <a href="{{ block.url }}" style="color:#604713;font-weight:bold;">{{ block.text }}</a>
+                  </p>
+                {% elif block.type == "image" %}
+                  <img src="{{ block.source }}"
+                       alt="{{ block.alt }}"
+                       width="680"
+                       style="display:block;width:100%;max-width:680px;height:auto;border:0;border-radius:6px;margin:12px 0 20px;">
+                {% endif %}
+              {% endfor %}
+              {% endif %}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

@@ -1,0 +1,37 @@
+Hi {{ creator_name }}💕✨
+
+Hope you are doing well and having an amazing day☀️!
+
+I’m Jackson from Vaelos🧘‍♀️, a trendy activewear & yoga brand thriving on TikTok POP Shop🛍️.
+
+We are absolutely obsessed with your unique content style😍 and would love to sincerely invite you to join us for a fun product collaboration🤝!
+
+✅ 100% FREE product sample sent straight to you🎁, no hidden fees at all
+✅ Lucrative commission payout for every single order💰
+
+Below is our detailed product image highlighting the key selling points📝.
+
+You’re totally free to create videos in your own signature creative style🎬 — no rigid mandatory script at all!
+
+Quick & easy video guideline📋
+⏱️ Duration: 15–30 seconds
+💡 Content: Share your genuine real-life wearing experience
+🔗 Final step: Link our product in your post
+
+If this collaboration opportunity interests you🥰, simply reply to this email and we’ll arrange and ship your complimentary sample out to you right away🚚💨!
+
+Best regards,
+Jackson
+Vaelos Brand Founder👔
+
+TikTok Shop Link:
+Sports jacket link{% if sports_jacket_url %}: {{ sports_jacket_url }}{% endif %}
+Women's shorts link{% if womens_shorts_url %}: {{ womens_shorts_url }}{% endif %}
+
+The selling points of the athletic yoga jacket are shown in the image.
+
+Key Selling Points for Women's Shorts:
+• Seamless Comfort Fit
+• High Waist Tummy Control
+• Scrunch Butt Lifting Design
+• 16 Vibrant Color Options

@@ -33,6 +33,11 @@ ZINIAO_REUSE_BROWSER_SESSION=true
 ZINIAO_BROWSER_SESSION_DIR=temporary/ziniao-browser-sessions
 ZINIAO_BROWSER_PROBE_TIMEOUT_SECONDS=2
 ZINIAO_BROWSER_LOCK_TIMEOUT_SECONDS=30
+ZINIAO_BROWSER_HOME_TIMEOUT_SECONDS=60
+ZINIAO_BROWSER_HOME_STABLE_SECONDS=2
+# 0 表示登录/验证码页面可一直等待，正数表示最长等待秒数
+ZINIAO_BROWSER_LOGIN_WAIT_SECONDS=0
+ZINIAO_BROWSER_STATUS_PATH=temporary/ziniao-browser-status.json
 ZINIAO_CONTACT_STORE_ID=
 ```
 
@@ -44,6 +49,14 @@ HTTP 单次超时不得低于 120 秒。驱动下载到 Git 忽略的 `temporary
 `temporary/ziniao-browser-sessions/`。后续独立 Agent 进程会先验证 UUID，再附加
 同一个浏览器，并通过 CDP 激活上一次保留的“查找达人”标签页。设置
 `ZINIAO_REUSE_BROWSER_SESSION=false` 可临时关闭跨进程复用。
+
+Django 统一启动脚本会在服务端进程启动后执行 `prepare_ziniao_browser`：它附加或
+启动目标店铺浏览器，验收一个已完成加载的 TikTok Shop 店铺首页标签页，把无敏感信息
+的就绪状态写入 `ZINIAO_BROWSER_STATUS_PATH`，随后只断开本地 Selenium 驱动并保留
+店铺浏览器。后续任务会复用相同 DevTools 端点，不会因每个任务重复启动固定端口。
+如果页面要求登录、验证码或其他人工验证，预启动命令会保持浏览器、端口和店铺锁并
+暂停后续 Worker 启动；用户直接在已打开的店铺浏览器完成验证后，首页验收会自动继续。
+`ZINIAO_BROWSER_LOGIN_WAIT_SECONDS=0` 表示一直等待，也可设置正数限制最长等待时间。
 
 ## 命令
 
@@ -79,7 +92,7 @@ export PYTHONPATH="$PWD/ziniao-automation/src"
 PYTHONPATH=ziniao-automation/src .venv/bin/python -m ziniao_automation \
   --prompt contact-creator \
   --store-id 27850427216664 \
-  --creator @delaneykreusel \
+  --creator delaneykreusel \
   --through-step 5 \
   --keep-open
 ```
@@ -105,7 +118,7 @@ PYTHONPATH=ziniao-automation/src .venv/bin/python -m ziniao_automation \
 PYTHONPATH=ziniao-automation/src .venv/bin/python -m ziniao_automation \
   --prompt contact-creator \
   --store-id 27850427216664 \
-  --creator @delaneykreusel \
+  --creator delaneykreusel \
   --through-step 6
 
 # 完整发送流程；只能在用户已明确授权时使用
@@ -121,7 +134,7 @@ PYTHONPATH=ziniao-automation/src .venv/bin/python -m ziniao_automation \
 ```
 
 `--creator-id` 是可选的预期值；未提供时，工作流以新聊天页 URL 动态发现的
-`creator_id` 为准，不能用商品关联达人数据中的其他 UID 猜测。
+`creator_id` 为准，不能用导入表格中的其他字段猜测。
 
 工作流会对相同招呼语和已创建邀请执行幂等检查。最终邀请按钮点击调用成功返回后，
 第一阶段只接受以下中间证据：
@@ -142,13 +155,23 @@ PYTHONPATH=ziniao-automation/src .venv/bin/python -m ziniao_automation \
 匹配，合作卡片发送后还必须取得 React 消息的服务端 ID 和送达状态。只有这组终态证据
 完整时才把任务目标标记为最终成功，但不改变邀请阶段已经写入的去重记录。
 
-使用 OpenCode + DeepSeek 逐步调用 `ziniao-contact` MCP，并在验收完成后重新打开
-最终聊天页持续调试：
+生产联系任务由确定性状态机按固定顺序调用 `ziniao-contact` MCP，正常步骤不调用
+大模型。查找达人前会尝试关闭页面遮挡按钮，并使用导入达人 ID 原文搜索（不添加
+`@`）。只有固定定位器因 DOM 变化而失败时，才会把裁剪后的可交互 DOM（不含截图）
+交给 DeepSeek V4 Pro；返回定位器必须在本地通过唯一、可见、可用校验。
+
+运行日志按 `Asia/Shanghai` 日期写入 `logs/YYYY-MM-DD/`。确定性流程及每个 MCP
+操作的完整输入、输出写入 `regular/`，OpenCode 与 DeepSeek 的提示词、DOM 输入、
+原始响应、耗时和错误写入 `model/`；密码、Cookie、Authorization 和 API Key
+统一脱敏。常规点击前随机等待 1–2 秒，最终确认邀请按钮点击前固定等待 3 秒，
+页面刷新前仍随机等待 5–8 秒。
+
+下面的 OpenCode 脚本只保留给人工调试，并在验收完成后重新打开最终聊天页：
 
 ```bash
 ./scripts/run-ziniao-contact-agent-macos.sh \
   --store-id 27850427216664 \
-  --creator @delaneykreusel \
+  --creator delaneykreusel \
   --keep-open
 ```
 

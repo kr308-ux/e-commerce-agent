@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -16,6 +18,36 @@ from ziniao_automation.models import StartedStore, StoreInfo
 
 
 class ZiniaoContactMcpServerTests(unittest.TestCase):
+    def test_regular_operation_writes_input_and_output_log(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(
+                "os.environ",
+                {"RUNTIME_LOG_ROOT": directory},
+            ):
+                state = ContactAutomationState()
+                result = state.call(
+                    "unknown-operation",
+                    {
+                        "taskId": "task-log",
+                        "stepId": "unknown",
+                        "value": "完整输入",
+                    },
+                )
+
+            paths = list(Path(directory).glob("*/regular/*.jsonl"))
+            self.assertEqual(len(paths), 1)
+            records = [
+                json.loads(line)
+                for line in paths[0].read_text(
+                    encoding="utf-8"
+                ).splitlines()
+            ]
+            self.assertEqual(len(records), 2)
+            self.assertEqual(records[0]["event"], "operation_started")
+            self.assertEqual(records[0]["input"]["value"], "完整输入")
+            self.assertEqual(records[1]["event"], "operation_finished")
+            self.assertEqual(records[1]["output"], result)
+
     def test_initialize_advertises_tools(self) -> None:
         server = ZiniaoContactMcpServer()
         response = server.handle(

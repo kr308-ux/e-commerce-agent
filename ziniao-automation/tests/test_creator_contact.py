@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from selenium.common.exceptions import StaleElementReferenceException
+from selenium.webdriver.common.by import By
 
 from ziniao_automation.actions.creator_contact import (
     APPROVED_GREETING_MESSAGE,
@@ -14,7 +15,7 @@ from ziniao_automation.errors import ZiniaoWorkflowError
 
 
 class CreatorContactWorkflowTests(unittest.TestCase):
-    def test_every_click_waits_random_three_to_five_seconds(self) -> None:
+    def test_every_click_waits_random_one_to_two_seconds(self) -> None:
         driver = Mock()
         element = Mock()
         workflow = CreatorContactWorkflow(driver)
@@ -22,7 +23,7 @@ class CreatorContactWorkflowTests(unittest.TestCase):
         with (
             patch(
                 "ziniao_automation.actions.creator_contact.random.uniform",
-                return_value=4.25,
+                return_value=1.425,
             ) as uniform,
             patch(
                 "ziniao_automation.actions.creator_contact.time.sleep"
@@ -30,10 +31,30 @@ class CreatorContactWorkflowTests(unittest.TestCase):
         ):
             workflow._click(element)
 
-        uniform.assert_called_once_with(3.0, 5.0)
-        sleep.assert_called_once_with(4.25)
+        uniform.assert_called_once_with(1.0, 2.0)
+        sleep.assert_called_once_with(1.425)
         element.click.assert_called_once_with()
-        self.assertEqual(workflow._action_wait_seconds, [4.25])
+        self.assertEqual(workflow._action_wait_seconds, [1.425])
+
+    def test_fixed_click_wait_bypasses_random_cadence(self) -> None:
+        driver = Mock()
+        element = Mock()
+        workflow = CreatorContactWorkflow(driver)
+
+        with (
+            patch(
+                "ziniao_automation.actions.creator_contact.random.uniform"
+            ) as uniform,
+            patch(
+                "ziniao_automation.actions.creator_contact.time.sleep"
+            ) as sleep,
+        ):
+            workflow._click(element, fixed_wait_seconds=3.0)
+
+        uniform.assert_not_called()
+        sleep.assert_called_once_with(3.0)
+        element.click.assert_called_once_with()
+        self.assertEqual(workflow._action_wait_seconds, [3.0])
 
     def test_every_refresh_waits_random_five_to_eight_seconds(self) -> None:
         driver = Mock()
@@ -569,6 +590,262 @@ class CreatorContactWorkflowTests(unittest.TestCase):
             result.evidence["existingPageReloadedForRecovery"]
         )
 
+    def test_search_closes_obstruction_and_types_imported_id_without_at(
+        self,
+    ) -> None:
+        driver = Mock()
+        driver.current_url = "https://example.test/connection/creator"
+        search_input = Mock()
+        search_input.get_attribute.return_value = "creator_id_123"
+        suggestion = Mock()
+        suggestion.text = "creator_id_123\nCreator"
+        result_row = Mock()
+        result_row.is_displayed.return_value = True
+        result_row.tag_name = "tr"
+        workflow = CreatorContactWorkflow(driver)
+        workflow._close_find_creators_obstruction = Mock(
+            return_value={
+                "findCreatorsObstructionPresent": True,
+                "findCreatorsObstructionClosed": True,
+                "findCreatorsObstructionSelector": "#target",
+            }
+        )
+        workflow._first_clickable = Mock(
+            side_effect=[search_input, suggestion]
+        )
+        workflow._click = Mock()
+        workflow._wait = Mock(side_effect=[True, result_row])
+
+        result = workflow.search_creator("@creator_id_123")
+
+        search_input.send_keys.assert_any_call("creator_id_123")
+        self.assertNotIn(
+            (("@creator_id_123",), {}),
+            [
+                (call.args, call.kwargs)
+                for call in search_input.send_keys.call_args_list
+            ],
+        )
+        self.assertEqual(result.evidence["inputValue"], "creator_id_123")
+        self.assertEqual(
+            result.evidence["importedCreatorId"],
+            "creator_id_123",
+        )
+        self.assertTrue(
+            result.evidence["findCreatorsObstructionClosed"]
+        )
+        self.assertEqual(
+            workflow._first_clickable.call_args_list[1].kwargs[
+                "timeout_seconds"
+            ],
+            8,
+        )
+
+    def test_store_page_priority_rejects_extension_and_accepts_seller(
+        self,
+    ) -> None:
+        self.assertEqual(
+            CreatorContactWorkflow._store_page_priority(
+                "chrome-extension://example/index.html"
+            ),
+            0,
+        )
+        self.assertEqual(
+            CreatorContactWorkflow._store_page_priority(
+                "https://seller.us.tiktokshopglobalselling.com/homepage"
+            ),
+            1,
+        )
+        self.assertEqual(
+            CreatorContactWorkflow._store_page_priority(
+                "https://affiliate.tiktokshopglobalselling.com/"
+                "connection/creator?shop_id=1"
+            ),
+            3,
+        )
+
+    def test_find_creators_obstruction_uses_requested_selector(self) -> None:
+        driver = Mock()
+        close_button = Mock()
+        close_button.is_displayed.side_effect = [True, False]
+        close_button.is_enabled.return_value = True
+        driver.find_elements.side_effect = [[close_button], []]
+        workflow = CreatorContactWorkflow(driver)
+        workflow._click = Mock()
+
+        evidence = workflow._close_find_creators_obstruction()
+
+        self.assertTrue(evidence["findCreatorsObstructionPresent"])
+        self.assertTrue(evidence["findCreatorsObstructionClosed"])
+        self.assertIn(
+            "#garfish_app_for_connection_x3s3dld3",
+            evidence["findCreatorsObstructionSelector"],
+        )
+        workflow._click.assert_called_once_with(close_button)
+
+    def test_find_creators_ai_search_switch_is_verified_as_off(self) -> None:
+        driver = Mock()
+        ai_search_switch = Mock()
+        ai_search_switch.is_displayed.return_value = True
+        ai_search_switch.is_enabled.return_value = True
+        switch_state = {"aria-checked": "true"}
+
+        def get_attribute(name: str) -> str | None:
+            if name == "role":
+                return "switch"
+            return switch_state.get(name)
+
+        ai_search_switch.get_attribute.side_effect = get_attribute
+        driver.find_elements.return_value = [ai_search_switch]
+        workflow = CreatorContactWorkflow(driver)
+        workflow._click = Mock(
+            side_effect=lambda _element: switch_state.update(
+                {"aria-checked": "false"}
+            )
+        )
+        workflow._wait = Mock(
+            side_effect=lambda condition, **_kwargs: condition(driver)
+        )
+
+        evidence = workflow._close_find_creators_obstruction()
+
+        workflow._click.assert_called_once_with(ai_search_switch)
+        self.assertTrue(evidence["findCreatorsObstructionClosed"])
+        self.assertFalse(
+            evidence["findCreatorsObstructionAlreadyClosed"]
+        )
+        self.assertEqual(switch_state["aria-checked"], "false")
+
+    def test_find_creators_ai_search_switch_already_off_is_not_clicked(
+        self,
+    ) -> None:
+        driver = Mock()
+        ai_search_switch = Mock()
+        ai_search_switch.is_displayed.return_value = True
+        ai_search_switch.is_enabled.return_value = True
+        ai_search_switch.get_attribute.side_effect = lambda name: {
+            "role": "switch",
+            "aria-checked": "false",
+        }.get(name)
+        driver.find_elements.return_value = [ai_search_switch]
+        workflow = CreatorContactWorkflow(driver)
+        workflow._click = Mock()
+
+        evidence = workflow._close_find_creators_obstruction()
+
+        workflow._click.assert_not_called()
+        self.assertTrue(evidence["findCreatorsObstructionClosed"])
+        self.assertTrue(
+            evidence["findCreatorsObstructionAlreadyClosed"]
+        )
+
+    def test_find_creators_ai_search_switch_uses_dom_fallback(self) -> None:
+        driver = Mock()
+        driver.find_elements.return_value = []
+        ai_search_switch = Mock()
+        ai_search_switch.is_displayed.return_value = True
+        ai_search_switch.is_enabled.return_value = True
+        switch_state = {"aria-checked": "true"}
+        ai_search_switch.get_attribute.side_effect = lambda name: {
+            "role": "switch",
+            **switch_state,
+        }.get(name)
+        fallback = Mock()
+        fallback.locate.return_value = ai_search_switch
+        workflow = CreatorContactWorkflow(
+            driver,
+            dom_fallback=fallback,
+        )
+        workflow._click = Mock(
+            side_effect=lambda _element: switch_state.update(
+                {"aria-checked": "false"}
+            )
+        )
+        workflow._wait = Mock(
+            side_effect=lambda condition, **_kwargs: condition(driver)
+        )
+
+        evidence = workflow._close_find_creators_obstruction()
+
+        fallback.locate.assert_called_once()
+        workflow._click.assert_called_once_with(ai_search_switch)
+        self.assertEqual(
+            evidence["findCreatorsObstructionLocatorSource"],
+            "dom_fallback",
+        )
+        self.assertTrue(evidence["findCreatorsObstructionClosed"])
+
+    def test_first_clickable_uses_dom_fallback_only_after_timeout(
+        self,
+    ) -> None:
+        driver = Mock()
+        driver.find_elements.return_value = []
+        recovered = Mock()
+        fallback = Mock()
+        fallback.locate.return_value = recovered
+        workflow = CreatorContactWorkflow(
+            driver,
+            dom_fallback=fallback,
+        )
+        workflow._wait = Mock(
+            side_effect=ZiniaoWorkflowError("未找到搜索框")
+        )
+
+        result = workflow._first_clickable(
+            ((By.CSS_SELECTOR, "input.old-selector"),),
+            missing_message="未找到搜索框",
+        )
+
+        self.assertIs(result, recovered)
+        fallback.locate.assert_called_once()
+
+    def test_first_clickable_rechecks_original_selectors_after_fallback(
+        self,
+    ) -> None:
+        driver = Mock()
+        late_element = Mock()
+        late_element.is_displayed.return_value = True
+        late_element.is_enabled.return_value = True
+        driver.find_elements.return_value = [late_element]
+        fallback = Mock()
+        fallback.locate.return_value = None
+        workflow = CreatorContactWorkflow(
+            driver,
+            dom_fallback=fallback,
+        )
+        workflow._wait = Mock(
+            side_effect=ZiniaoWorkflowError("未出现精确候选")
+        )
+
+        result = workflow._first_clickable(
+            ((By.CSS_SELECTOR, ".exact-creator"),),
+            missing_message="未出现精确候选",
+            timeout_seconds=8,
+        )
+
+        self.assertIs(result, late_element)
+        fallback.locate.assert_called_once()
+
+    def test_first_clickable_does_not_call_model_on_normal_path(
+        self,
+    ) -> None:
+        driver = Mock()
+        deterministic_element = Mock()
+        fallback = Mock()
+        workflow = CreatorContactWorkflow(
+            driver,
+            dom_fallback=fallback,
+        )
+        workflow._wait = Mock(return_value=deterministic_element)
+
+        result = workflow._first_clickable(
+            ((By.CSS_SELECTOR, "input.known-selector"),),
+            missing_message="未找到搜索框",
+        )
+
+        self.assertIs(result, deterministic_element)
+        fallback.locate.assert_not_called()
+
     def test_invitation_click_completes_without_waiting_for_panel_update(
         self,
     ) -> None:
@@ -621,7 +898,10 @@ class CreatorContactWorkflowTests(unittest.TestCase):
         self.assertFalse(
             result.evidence["invitationSubmissionConfirmed"]
         )
-        workflow._click.assert_called_once_with(invite_button)
+        workflow._click.assert_called_once_with(
+            invite_button,
+            fixed_wait_seconds=3.0,
+        )
         workflow._refresh_invitation_with_retries.assert_not_called()
         workflow.driver.refresh.assert_not_called()
 
@@ -676,7 +956,10 @@ class CreatorContactWorkflowTests(unittest.TestCase):
         self.assertFalse(
             result.evidence["invitationSubmissionConfirmed"]
         )
-        workflow._click.assert_called_once_with(invite_button)
+        workflow._click.assert_called_once_with(
+            invite_button,
+            fixed_wait_seconds=3.0,
+        )
         workflow._refresh_invitation_with_retries.assert_not_called()
         workflow.driver.refresh.assert_not_called()
 
@@ -743,7 +1026,10 @@ class CreatorContactWorkflowTests(unittest.TestCase):
             result.evidence["invitationGroupId"],
             "7664550207413847821",
         )
-        workflow._click.assert_called_once_with(invite_button)
+        workflow._click.assert_called_once_with(
+            invite_button,
+            fixed_wait_seconds=3.0,
+        )
         workflow._refresh_invitation_with_retries.assert_not_called()
         workflow.driver.refresh.assert_not_called()
         workflow.close_creator_tabs_keep_search.assert_called_once()

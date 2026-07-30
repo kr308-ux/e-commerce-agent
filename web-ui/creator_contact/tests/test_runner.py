@@ -20,6 +20,9 @@ from creator_contact.services.contact_runner import (
     SubprocessContactExecutor,
     _exact_creator_unavailable,
 )
+from creator_contact.services.subprocess_control import (
+    TaskCancellationRequested,
+)
 from creator_contact.models import CollaborationSyncJob, DirectedCollaborationOption
 
 from .base import CreatorContactTestCase
@@ -714,16 +717,28 @@ class ContactRunnerTests(CreatorContactTestCase):
                 "ZINIAO_PASSWORD": "test-password",
             },
         ), patch(
-            "creator_contact.services.contact_runner.subprocess.run",
+            "creator_contact.services.contact_runner.run_task_subprocess",
             return_value=completed,
         ) as run:
             result = SubprocessContactExecutor()(task, target)
 
-        command = run.call_args.args[0]
+        command = run.call_args.args[1]
+        self.assertIn("ziniao_automation.contact_task_runner", command)
         self.assertIn("--greeting-message", command)
+        self.assertEqual(
+            command[command.index("--creator") + 1],
+            target.creator_handle_snapshot,
+        )
+        self.assertFalse(
+            command[command.index("--creator") + 1].startswith("@")
+        )
         self.assertEqual(
             command[command.index("--invitation-group-id") + 1],
             task.invitation_id_snapshot,
+        )
+        self.assertEqual(
+            command[command.index("--model") + 1],
+            task.model_name,
         )
         self.assertNotIn("--confirm-send-card", command)
         self.assertEqual(command[command.index("--through-step") + 1], "11")
@@ -870,6 +885,71 @@ class ContactRunnerTests(CreatorContactTestCase):
             "ziniao_disconnect",
         )
 
+    def test_subprocess_parser_preserves_tool_error_root_cause(self):
+        failed_event = {
+            "type": "tool_use",
+            "sessionID": "session-failed",
+            "part": {
+                "tool": "ziniao-contact_ziniao_send_greeting",
+                "state": {
+                    "status": "error",
+                    "input": {
+                        "stepId": "send-greeting",
+                        "confirmSendGreiting": True,
+                    },
+                    "error": json.dumps(
+                        {
+                            "success": False,
+                            "status": "FAILED",
+                            "data": None,
+                            "error": {
+                                "code": "ZiniaoWorkflowError",
+                                "userMessage": "必须显式确认发送招呼语。",
+                                "retryable": False,
+                                "domFallback": {
+                                    "classification": "business_safety"
+                                },
+                            },
+                        }
+                    ),
+                },
+            },
+        }
+
+        result = SubprocessContactExecutor._parse_output(
+            json.dumps(failed_event)
+        )
+
+        self.assertEqual(result["errorCode"], "ZiniaoWorkflowError")
+        self.assertEqual(
+            result["errorMessage"],
+            "必须显式确认发送招呼语。",
+        )
+        self.assertEqual(result["steps"][0]["status"], "FAILED")
+        self.assertEqual(
+            result["steps"][0]["domFallback"]["classification"],
+            "business_safety",
+        )
+
+    def test_final_json_parser_accepts_prose_before_bare_object(self):
+        final_event = {
+            "type": "text",
+            "part": {
+                "text": (
+                    "流程已经停止。\n"
+                    '{"success":false,"errorCode":"ROOT_CAUSE",'
+                    '"errorMessage":"精确错误"}'
+                )
+            },
+        }
+
+        result = SubprocessContactExecutor._parse_output(
+            json.dumps(final_event)
+        )
+
+        self.assertEqual(result["errorCode"], "ROOT_CAUSE")
+        self.assertEqual(result["errorMessage"], "精确错误")
+
     def test_card_batch_executor_opens_project_once_for_all_targets(self):
         task = self.create_contact_task(top_n=2)
         freeze_task_targets(task)
@@ -908,12 +988,12 @@ class ContactRunnerTests(CreatorContactTestCase):
                 "ZINIAO_PASSWORD": "test-password",
             },
         ), patch(
-            "creator_contact.services.contact_runner.subprocess.run",
+            "creator_contact.services.contact_runner.run_task_subprocess",
             return_value=completed,
         ) as run:
             results = SubprocessCardExecutor().run_many(task, targets)
 
-        command = run.call_args.args[0]
+        command = run.call_args.args[1]
         self.assertIn("--creators-json", command)
         creators = json.loads(
             command[command.index("--creators-json") + 1]
@@ -925,6 +1005,27 @@ class ContactRunnerTests(CreatorContactTestCase):
         self.assertEqual(
             results[targets[0].pk]["steps"][0]["operation"],
             "open_project_accepted_creators",
+        )
+
+    def test_cancellation_stops_remaining_targets(self):
+        task = self.create_contact_task(top_n=2)
+        freeze_task_targets(task)
+
+        def cancelled_executor(current_task, target):
+            CreatorContactTask.objects.filter(pk=current_task.pk).update(
+                status=CreatorContactTask.Status.CANCELLED
+            )
+            raise TaskCancellationRequested("cancelled")
+
+        result = CreatorContactRunner(
+            task,
+            executor=cancelled_executor,
+        ).run()
+
+        self.assertEqual(result.status, CreatorContactTask.Status.CANCELLED)
+        self.assertEqual(
+            set(task.targets.values_list("status", flat=True)),
+            {CreatorContactTarget.Status.SKIPPED},
         )
 
     def test_exact_creator_safety_failure_is_skippable(self):

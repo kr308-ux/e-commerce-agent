@@ -21,6 +21,11 @@ from creator_contact.models import (
     CreatorContactTask,
     CreatorContactTaskStep,
 )
+from creator_contact.services.subprocess_control import (
+    TaskCancellationRequested,
+    run_task_subprocess,
+    task_cancellation_requested,
+)
 
 
 TOOL_LABELS = {
@@ -258,7 +263,7 @@ def _evidence(data: object) -> dict[str, Any]:
 
 
 def _final_json_payload(text: str) -> dict[str, Any]:
-    """Accept a plain object or the last JSON object in a fenced response."""
+    """Accept plain, fenced, or prose-prefixed JSON and return the last object."""
     normalized = str(text or "").strip()
     if not normalized:
         return {}
@@ -271,14 +276,25 @@ def _final_json_payload(text: str) -> dict[str, Any]:
             flags=re.IGNORECASE,
         )
     )
-    for candidate in reversed(candidates):
+    decoded: list[dict[str, Any]] = []
+    decoder = json.JSONDecoder()
+    for candidate in candidates:
         try:
             payload = json.loads(candidate)
         except json.JSONDecodeError:
-            continue
+            payload = None
         if isinstance(payload, dict):
-            return payload
-    return {}
+            decoded.append(payload)
+        for index, character in enumerate(candidate):
+            if character != "{":
+                continue
+            try:
+                nested, _end = decoder.raw_decode(candidate[index:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(nested, dict):
+                decoded.append(nested)
+    return decoded[-1] if decoded else {}
 
 
 def _step_output_summary(data: object) -> dict[str, Any]:
@@ -352,6 +368,12 @@ def _step_output_summary(data: object) -> dict[str, Any]:
         "storeBrowserPreserved",
         "webdriverEndpointPreserved",
         "cdpClickRecoveryCount",
+        "importedCreatorId",
+        "findCreatorsObstructionPresent",
+        "findCreatorsObstructionClosed",
+        "findCreatorsObstructionSelector",
+        "domFallbackUsed",
+        "domFallbackEvents",
     }
     return {
         key: _json_safe(value)
@@ -376,7 +398,7 @@ def _safe_input_summary(tool_input: object) -> dict[str, Any]:
 
 
 class SubprocessContactExecutor:
-    """Run the validated Ziniao agent CLI and normalize its JSONL output."""
+    """Run the deterministic Ziniao state machine and normalize its JSONL."""
 
     def __init__(
         self,
@@ -402,7 +424,6 @@ class SubprocessContactExecutor:
                 "任务缺少招呼语或定向合作邀请发送授权。"
             )
         required_environment = (
-            "DEEPSEEK_API_KEY",
             "ZINIAO_COMPANY",
             "ZINIAO_USERNAME",
             "ZINIAO_PASSWORD",
@@ -420,13 +441,13 @@ class SubprocessContactExecutor:
         command = [
             self.python_executable,
             "-m",
-            "ziniao_automation.agent_runner",
+            "ziniao_automation.contact_task_runner",
             "--task-id",
             f"{task.pk}:{target.pk}",
             "--store-id",
             task.store_id,
             "--creator",
-            f"@{target.normalized_handle}",
+            target.creator_handle_snapshot,
             "--invitation-name",
             task.invitation_name_snapshot,
             "--invitation-group-id",
@@ -437,6 +458,8 @@ class SubprocessContactExecutor:
             "11",
             "--confirm-send-greeting",
             "--confirm-send-invitation",
+            "--model",
+            task.model_name,
         ]
         environment = os.environ.copy()
         package_src = Path(settings.PROJECT_ROOT) / "ziniao-automation" / "src"
@@ -448,15 +471,12 @@ class SubprocessContactExecutor:
         )
 
         try:
-            completed = subprocess.run(
+            completed = run_task_subprocess(
+                task.pk,
                 command,
                 cwd=settings.PROJECT_ROOT,
                 env=environment,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
                 timeout=self.timeout_seconds,
-                check=False,
             )
         except subprocess.TimeoutExpired as error:
             raise ContactExecutionError("联系达人子进程执行超时。") from error
@@ -553,13 +573,16 @@ class SubprocessContactExecutor:
                 continue
             part = event.get("part") or {}
             state = part.get("state") or {}
-            if state.get("status") != "completed":
-                continue
             tool_input = state.get("input") or {}
             operation = _tool_name(str(part.get("tool") or ""))
             if operation not in TOOL_LABELS:
                 continue
-            response = _response_payload(state.get("output"))
+            response_source = (
+                state.get("output")
+                if state.get("status") == "completed"
+                else state.get("error")
+            )
+            response = _response_payload(response_source)
             error = response.get("error") or {}
             success = response.get("success") is True
             data = response.get("data") or {}
@@ -577,6 +600,27 @@ class SubprocessContactExecutor:
                     "outputSummary": _step_output_summary(data),
                     "errorCode": str(error.get("code") or ""),
                     "errorMessage": _redact(error.get("userMessage")),
+                    "domFallback": _json_safe(
+                        {
+                            **(
+                                error.get("domFallback")
+                                if isinstance(
+                                    error.get("domFallback"),
+                                    dict,
+                                )
+                                else {}
+                            ),
+                            **(
+                                {
+                                    "events": error.get(
+                                        "domFallbackEvents"
+                                    )
+                                }
+                                if error.get("domFallbackEvents")
+                                else {}
+                            ),
+                        }
+                    ),
                 }
             )
             if success:
@@ -764,15 +808,12 @@ class SubprocessCardExecutor:
             else f"{package_src}{os.pathsep}{prior_pythonpath}"
         )
         try:
-            completed = subprocess.run(
+            completed = run_task_subprocess(
+                task.pk,
                 command,
                 cwd=settings.PROJECT_ROOT,
                 env=environment,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
                 timeout=self.timeout_seconds,
-                check=False,
             )
         except subprocess.TimeoutExpired as error:
             raise ContactExecutionError(
@@ -896,15 +937,12 @@ class SubprocessCardExecutor:
             else f"{package_src}{os.pathsep}{prior_pythonpath}"
         )
         try:
-            completed = subprocess.run(
+            completed = run_task_subprocess(
+                task.pk,
                 command,
                 cwd=settings.PROJECT_ROOT,
                 env=environment,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
                 timeout=self.timeout_seconds * max(1, len(targets)),
-                check=False,
             )
         except subprocess.TimeoutExpired as error:
             raise ContactExecutionError(
@@ -1033,15 +1071,12 @@ class SubprocessMembershipExecutor:
             else f"{package_src}{os.pathsep}{prior_pythonpath}"
         )
         try:
-            completed = subprocess.run(
+            completed = run_task_subprocess(
+                task.pk,
                 command,
                 cwd=settings.PROJECT_ROOT,
                 env=environment,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
                 timeout=self.timeout_seconds,
-                check=False,
             )
         except subprocess.TimeoutExpired as error:
             raise ContactExecutionError(
@@ -1154,15 +1189,12 @@ class SubprocessMembershipExecutor:
             else f"{package_src}{os.pathsep}{prior_pythonpath}"
         )
         try:
-            completed = subprocess.run(
+            completed = run_task_subprocess(
+                task.pk,
                 command,
                 cwd=settings.PROJECT_ROOT,
                 env=environment,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
                 timeout=self.timeout_seconds * max(1, len(targets)),
-                check=False,
             )
         except subprocess.TimeoutExpired as error:
             raise ContactExecutionError(
@@ -1232,7 +1264,7 @@ def record_invited_creator(
     locked = (
         CreatorContactTarget.objects
         .select_for_update()
-        .select_related("task", "related_creator")
+        .select_related("task", "creator")
         .get(pk=target.pk)
     )
     stored_result = (
@@ -1274,7 +1306,7 @@ def record_invited_creator(
                 locked.chat_creator_id
                 or (existing.chat_creator_id if existing else "")
             ),
-            "related_creator": locked.related_creator,
+            "creator": locked.creator,
             "contact_task": task,
             "greeting_sha256": task.greeting_sha256,
             "invitation_id": (
@@ -1317,7 +1349,7 @@ def record_successful_contact(
     locked = (
         CreatorContactTarget.objects
         .select_for_update()
-        .select_related("task", "related_creator")
+        .select_related("task", "creator")
         .get(pk=target.pk)
     )
     stored_result = (
@@ -1349,7 +1381,7 @@ def record_successful_contact(
         defaults={
             "creator_handle": locked.creator_handle_snapshot,
             "chat_creator_id": locked.chat_creator_id,
-            "related_creator": locked.related_creator,
+            "creator": locked.creator,
             "contact_task": task,
             "greeting_sha256": task.greeting_sha256,
             "invitation_id": locked.actual_invitation_id,
@@ -1439,6 +1471,8 @@ class CreatorContactRunner:
                 "任务没有冻结的达人目标。",
             )
         for index, target in enumerate(targets, start=1):
+            if self._cancellation_requested():
+                return self._cancel_task()
             if target.status in {
                 CreatorContactTarget.Status.SUCCESS,
                 CreatorContactTarget.Status.INVITATION_COMPLETED,
@@ -1472,6 +1506,8 @@ class CreatorContactRunner:
 
             try:
                 result = self.executor(self.task, target)
+            except TaskCancellationRequested:
+                return self._cancel_task()
             except Exception as error:
                 result = {
                     "success": False,
@@ -1482,8 +1518,17 @@ class CreatorContactRunner:
             self._persist_steps(target, result.get("steps") or [])
             self._persist_target_result(target, result)
             self._update_progress(index, len(targets), target)
+            if self._cancellation_requested():
+                return self._cancel_task()
 
-        self._run_card_phase()
+        if self._cancellation_requested():
+            return self._cancel_task()
+        try:
+            self._run_card_phase()
+        except TaskCancellationRequested:
+            return self._cancel_task()
+        if self._cancellation_requested():
+            return self._cancel_task()
         return self._finish_task()
 
     def _run_card_phase(self) -> None:
@@ -1503,6 +1548,8 @@ class CreatorContactRunner:
         if callable(batch_executor):
             try:
                 results = batch_executor(self.task, targets)
+            except TaskCancellationRequested:
+                raise
             except Exception as error:
                 results = {
                     target.pk: {
@@ -1520,6 +1567,8 @@ class CreatorContactRunner:
                         self.task,
                         target,
                     )
+                except TaskCancellationRequested:
+                    raise
                 except Exception as error:
                     results[target.pk] = {
                         "success": False,
@@ -1579,6 +1628,8 @@ class CreatorContactRunner:
                     self.task,
                     recoverable_targets,
                 )
+            except TaskCancellationRequested:
+                raise
             except Exception as error:
                 batch_memberships = {
                     target.pk: {
@@ -1597,6 +1648,8 @@ class CreatorContactRunner:
             if membership is None:
                 try:
                     membership = self.membership_executor(self.task, target)
+                except TaskCancellationRequested:
+                    raise
                 except Exception as error:
                     membership = {
                         "success": False,
@@ -1687,7 +1740,25 @@ class CreatorContactRunner:
                         step.get("inputSummary") or {}
                     ),
                     "output_summary": _json_safe(
-                        step.get("outputSummary") or {}
+                        {
+                            **(
+                                step.get("outputSummary")
+                                if isinstance(
+                                    step.get("outputSummary"),
+                                    dict,
+                                )
+                                else {}
+                            ),
+                            **(
+                                {
+                                    "domFallback": step.get(
+                                        "domFallback"
+                                    )
+                                }
+                                if step.get("domFallback")
+                                else {}
+                            ),
+                        }
                     ),
                     "error_code": str(step.get("errorCode") or "")[:100],
                     "error_message": _redact(step.get("errorMessage")),
@@ -1898,6 +1969,8 @@ class CreatorContactRunner:
         )
 
     def _finish_task(self) -> CreatorContactTask:
+        if self._cancellation_requested():
+            return self._cancel_task()
         counts = {
             status: self.task.targets.filter(status=status).count()
             for status in CreatorContactTarget.Status.values
@@ -1947,6 +2020,34 @@ class CreatorContactRunner:
         else:
             self.task.error_code = ""
             self.task.error_message = ""
+        self.task.save()
+        return self.task
+
+    def _cancellation_requested(self) -> bool:
+        return task_cancellation_requested(self.task.pk)
+
+    def _cancel_task(self) -> CreatorContactTask:
+        now = timezone.now()
+        CreatorContactTarget.objects.filter(
+            task=self.task,
+            status__in={
+                CreatorContactTarget.Status.PENDING,
+                CreatorContactTarget.Status.RUNNING,
+            },
+        ).update(
+            status=CreatorContactTarget.Status.SKIPPED,
+            current_step="任务已终止，未继续执行",
+            error_code="TASK_CANCELLED",
+            error_message="达人联系任务已由用户终止。",
+            finished_at=now,
+            updated_at=now,
+        )
+        self.task.refresh_from_db()
+        self.task.status = CreatorContactTask.Status.CANCELLED
+        self.task.current_step = "达人联系任务已终止"
+        self.task.error_code = "TASK_CANCELLED"
+        self.task.error_message = "达人联系任务已由用户终止。"
+        self.task.finished_at = self.task.finished_at or now
         self.task.save()
         return self.task
 

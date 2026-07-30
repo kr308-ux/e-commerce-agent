@@ -29,11 +29,12 @@ class CreatorContactViewTests(CreatorContactTestCase):
             "greeting_templates",
             "collaboration_options",
             "source_tasks",
-            "products",
+            "import_batches",
             "candidate_preview",
             "excluded_count",
             "latest_contact_tasks",
             "store_id",
+            "browser_status",
             "sync_status",
         ):
             self.assertIn(key, context)
@@ -51,15 +52,33 @@ class CreatorContactViewTests(CreatorContactTestCase):
 
         self.assertEqual(dashboard.status_code, 200)
         self.assertContains(dashboard, "达人联系")
+        self.assertContains(dashboard, "达人选择")
+        self.assertNotContains(dashboard, "选择导入批次与高销售额达人")
+        self.assertContains(dashboard, "总销售额")
+        self.assertNotContains(dashboard, "确认全部远端发送操作")
         self.assertEqual(detail.status_code, 200)
         self.assertContains(detail, "目标达人执行状态")
+        self.assertContains(detail, "达人 ID：Highest")
+        self.assertContains(detail, "聊天 creator_id")
         self.assertContains(detail, "从 Django 启动测试")
+
+    def test_browser_status_endpoint_returns_readiness(self):
+        with patch(
+            "creator_contact.views.browser_readiness",
+            return_value={"ready": True, "status": "ready"},
+        ):
+            response = self.client.get(
+                reverse("creator_contact:browser_status")
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ready"])
 
     def test_candidates_returns_ranked_json(self):
         response = self.client.get(
             reverse("creator_contact:candidates"),
             {
-                "product_id": self.product.pk,
+                "import_task_id": self.import_task.pk,
                 "top_n": 2,
             },
         )
@@ -70,13 +89,38 @@ class CreatorContactViewTests(CreatorContactTestCase):
             ["highest", "middle"],
         )
 
+    def test_candidates_supports_creator_id_auto_select_and_manual_rules(self):
+        by_id = self.client.get(
+            reverse("creator_contact:candidates"),
+            {
+                "import_task_id": self.import_task.pk,
+                "selection_method": "CREATOR_ID",
+            },
+        )
+        manual = self.client.get(
+            reverse("creator_contact:candidates"),
+            {
+                "import_task_id": self.import_task.pk,
+                "selection_method": "MANUAL",
+            },
+        )
+
+        self.assertEqual(by_id.status_code, 200)
+        self.assertEqual(
+            [row["creatorHandle"] for row in by_id.json()["creators"]],
+            ["highest", "middle", "low", "null_revenue"],
+        )
+        self.assertEqual(by_id.json()["requestedCount"], 50)
+        self.assertEqual(manual.status_code, 200)
+        self.assertEqual(len(manual.json()["creators"]), 4)
+
     def test_create_task_snapshots_configuration_and_targets(self):
         response = self.client.post(
             reverse("creator_contact:dashboard"),
             {
                 "action": "create_task",
                 "store_id": self.store_id,
-                "source_product": self.product.pk,
+                "source_import_task": self.import_task.pk,
                 "top_n": 3,
                 "greeting_template": self.greeting.pk,
                 "collaboration_option": self.invitation.pk,
@@ -98,6 +142,122 @@ class CreatorContactViewTests(CreatorContactTestCase):
         self.assertEqual(task.greeting_snapshot, "Hello creator")
         self.assertEqual(task.invitation_name_snapshot, "金色拉链+短裤13")
         self.assertEqual(task.targets.count(), 3)
+        self.assertEqual(task.model_name, settings.DOM_FALLBACK_MODEL)
+
+    def test_create_task_from_creator_id_rule_auto_selects_full_batch(self):
+        response = self.client.post(
+            reverse("creator_contact:dashboard"),
+            {
+                "action": "create_task",
+                "store_id": self.store_id,
+                "source_import_task": self.import_task.pk,
+                "selection_method": "CREATOR_ID",
+                "greeting_template": self.greeting.pk,
+                "collaboration_option": self.invitation.pk,
+            },
+        )
+
+        task = CreatorContactTask.objects.get()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(task.selection_method, "CREATOR_ID")
+        self.assertEqual(task.top_n, 4)
+        self.assertTrue(task.confirm_send_greeting)
+        self.assertTrue(task.confirm_send_invitation)
+        self.assertTrue(task.confirm_send_card)
+        self.assertEqual(
+            list(
+                task.targets.order_by("rank").values_list(
+                    "creator_handle_snapshot",
+                    flat=True,
+                )
+            ),
+            ["Highest", "@Middle", "low", "null_revenue"],
+        )
+
+    def test_create_task_by_total_sales_uses_total_revenue_order(self):
+        for creator, amount in (
+            (self.high, 100),
+            (self.middle, 900),
+            (self.low, 500),
+        ):
+            self.create_creator(
+                creator.creator_id,
+                creator.nickname,
+                revenue_30=None,
+                revenue_7=None,
+                revenue_total=amount,
+                row=creator.import_memberships.get(
+                    import_task=self.import_task
+                ).first_row_number,
+            )
+
+        response = self.client.post(
+            reverse("creator_contact:dashboard"),
+            {
+                "action": "create_task",
+                "store_id": self.store_id,
+                "source_import_task": self.import_task.pk,
+                "selection_method": "SALES",
+                "sales_window_days": "0",
+                "top_n": 2,
+                "greeting_template": self.greeting.pk,
+                "collaboration_option": self.invitation.pk,
+                "confirm_send_greeting": "on",
+                "confirm_send_invitation": "on",
+                "confirm_send_card": "on",
+            },
+        )
+
+        task = CreatorContactTask.objects.get()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(task.sales_window_days, 0)
+        self.assertEqual(
+            list(
+                task.targets.order_by("rank").values_list(
+                    "creator_handle_snapshot",
+                    flat=True,
+                )
+            ),
+            ["@Middle", "low"],
+        )
+        self.assertEqual(
+            str(task.targets.order_by("rank").first().total_revenue_snapshot),
+            "900.00",
+        )
+
+    def test_create_task_from_manual_checkboxes_uses_checked_creators(self):
+        response = self.client.post(
+            reverse("creator_contact:dashboard"),
+            {
+                "action": "create_task",
+                "store_id": self.store_id,
+                "source_import_task": self.import_task.pk,
+                "selection_method": "MANUAL",
+                "selected_creator_ids": [
+                    str(self.middle.pk),
+                    str(self.high.pk),
+                ],
+                "greeting_template": self.greeting.pk,
+                "collaboration_option": self.invitation.pk,
+                "confirm_send_greeting": "on",
+                "confirm_send_invitation": "on",
+                "confirm_send_card": "on",
+            },
+        )
+
+        task = CreatorContactTask.objects.get()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(task.selection_method, "MANUAL")
+        self.assertEqual(task.top_n, 2)
+        self.assertEqual(
+            list(
+                task.targets.order_by("rank").values_list(
+                    "creator_handle_snapshot",
+                    flat=True,
+                )
+            ),
+            ["@Middle", "Highest"],
+        )
 
     def test_save_greeting_and_enqueue_collaboration_sync(self):
         greeting_response = self.client.post(
@@ -254,3 +414,44 @@ class CreatorContactViewTests(CreatorContactTestCase):
         self.assertTrue(response.json()["workerReused"])
         self.assertIn(":16852/health", response.json()["workerEndpoint"])
         popen.assert_not_called()
+
+    def test_running_task_can_be_cancelled_from_django_server(self):
+        task = self.create_contact_task(top_n=1)
+        freeze_task_targets(task)
+        target = task.targets.get()
+        task.status = CreatorContactTask.Status.RUNNING
+        task.current_step = "联系达人"
+        task.save()
+        target.status = "RUNNING"
+        target.save()
+
+        response = self.client.post(
+            reverse(
+                "creator_contact:cancel_task",
+                kwargs={"task_id": task.pk},
+            ),
+            HTTP_ACCEPT="application/json",
+        )
+
+        task.refresh_from_db()
+        target.refresh_from_db()
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(task.status, CreatorContactTask.Status.CANCELLED)
+        self.assertEqual(task.error_code, "TASK_CANCELLED")
+        self.assertIsNotNone(task.finished_at)
+        self.assertEqual(target.status, "SKIPPED")
+
+    def test_finished_task_cannot_be_cancelled(self):
+        task = self.create_contact_task(top_n=1)
+        task.status = CreatorContactTask.Status.SUCCESS
+        task.save()
+
+        response = self.client.post(
+            reverse(
+                "creator_contact:cancel_task",
+                kwargs={"task_id": task.pk},
+            ),
+            HTTP_ACCEPT="application/json",
+        )
+
+        self.assertEqual(response.status_code, 409)

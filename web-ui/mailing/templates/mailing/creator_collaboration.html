@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vaelos Product Collaboration</title>
+</head>
+<body style="margin:0;padding:0;background:#f5f5f5;color:#222;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f5f5f5;">
+    <tr>
+      <td align="center" style="padding:24px 12px;">
+        <table role="presentation" width="680" cellspacing="0" cellpadding="0" border="0"
+               style="width:100%;max-width:680px;background:#fff;border-radius:10px;">
+          <tr>
+            <td style="padding:32px;font-size:16px;line-height:1.65;">
+              <p style="margin-top:0;">Hi {{ creator_name }}💕✨</p>
+              <p>Hope you are doing well and having an amazing day☀️!</p>
+              <p>I’m Jackson from Vaelos🧘‍♀️, a trendy activewear &amp; yoga brand thriving on TikTok POP Shop🛍️.</p>
+              <p>We are absolutely obsessed with your unique content style😍 and would love to sincerely invite you to join us for a fun product collaboration🤝!</p>
+              <p style="margin-bottom:6px;">✅ 100% FREE product sample sent straight to you🎁, no hidden fees at all</p>
+              <p style="margin-top:6px;">✅ Lucrative commission payout for every single order💰</p>
+              <p>Below is our detailed product image highlighting the key selling points📝.</p>
+              <p>You’re totally free to create videos in your own signature creative style🎬 — no rigid mandatory script at all!</p>
+              <p style="font-weight:bold;margin-bottom:8px;">Quick &amp; easy video guideline📋</p>
+              <p style="margin:5px 0;">⏱️ Duration: 15–30 seconds</p>
+              <p style="margin:5px 0;">💡 Content: Share your genuine real-life wearing experience</p>
+              <p style="margin:5px 0 20px;">🔗 Final step: Link our product in your post</p>
+              <p>If this collaboration opportunity interests you🥰, simply reply to this email and we’ll arrange and ship your complimentary sample out to you right away🚚💨!</p>
+              <p style="margin-top:30px;">Best regards,<br>Jackson<br>Vaelos Brand Founder👔</p>
+              <p style="font-weight:bold;margin-bottom:6px;">TikTok Shop Link:</p>
+              <p style="margin:5px 0;">
+                {% if sports_jacket_url %}
+                  <a href="{{ sports_jacket_url }}" style="color:#604713;font-weight:bold;">Sports jacket link 👈🏻Click</a>
+                {% else %}
+                  Sports jacket link
+                {% endif %}
+              </p>
+              <p style="margin:5px 0 20px;">
+                {% if womens_shorts_url %}
+                  <a href="{{ womens_shorts_url }}" style="color:#604713;font-weight:bold;">Women's shorts link 👈🏻Click</a>
+                {% else %}
+                  Women's shorts link
+                {% endif %}
+              </p>
+              <p style="font-weight:bold;">The selling points of the athletic yoga jacket are shown in the image.</p>
+              <img src="cid:{{ product_image_cid }}"
+                   alt="Vaelos athletic yoga jacket and women's shorts"
+                   width="680"
+                   style="display:block;width:100%;max-width:680px;height:auto;border:0;border-radius:6px;">
+              <p style="font-weight:bold;margin:24px 0 6px;">Key Selling Points for Women's Shorts:</p>
+              <p style="margin:5px 0;">• Seamless Comfort Fit</p>
+              <p style="margin:5px 0;">• High Waist Tummy Control</p>
+              <p style="margin:5px 0;">• Scrunch Butt Lifting Design</p>
+              <p style="margin:5px 0;">• 16 Vibrant Color Options</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

@@ -4,11 +4,11 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="E-commerce Agent 浏览器智能体任务工作台">
+    <meta name="description" content="E-commerce Agent 达人运营工作台">
     <title>{% block title %}E-commerce Agent{% endblock %}</title>
-    <link rel="stylesheet" href="{% static 'tasks/css/app.css' %}">
+    <link rel="stylesheet" href="{% static 'tasks/css/app.css' %}?v=20260730-rich-editor1">
     {% block extra_head %}{% endblock %}
-    <script src="{% static 'tasks/js/app.js' %}" defer></script>
+    <script src="{% static 'tasks/js/app.js' %}?v=20260729-preview3" defer></script>
 </head>
 <body>
     <a class="skip-link" href="#main-content">跳到主要内容</a>
@@ -28,30 +28,42 @@
             <nav class="nav-list">
                 <p class="nav-label">工作空间</p>
                 <a class="nav-item {% block nav_dashboard %}{% endblock %}" href="{% url 'tasks:dashboard' %}">
-                    <span class="nav-icon" aria-hidden="true">⌂</span>
+                    <span class="nav-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M3 11 12 3l9 8v9H3zM9 20v-6h6v6"/></svg>
+                    </span>
                     工作台
                 </a>
-                <a class="nav-item" href="{% url 'tasks:dashboard' %}#task-create">
-                    <span class="nav-icon" aria-hidden="true">＋</span>
-                    新建任务
-                </a>
-                <a class="nav-item {% block nav_tasks %}{% endblock %}" href="{% url 'tasks:dashboard' %}#recent-tasks">
-                    <span class="nav-icon" aria-hidden="true">◫</span>
-                    任务记录
+                <a class="nav-item {% block nav_creator_data %}{% endblock %}" href="{% url 'tasks:creator-data' %}">
+                    <span class="nav-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
+                    </span>
+                    达人数据
                     <span class="nav-count">{{ task_count|default:"0" }}</span>
                 </a>
                 <a class="nav-item {% block nav_creator_contact %}{% endblock %}" href="{% url 'creator_contact:dashboard' %}">
-                    <span class="nav-icon" aria-hidden="true">◎</span>
+                    <span class="nav-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M19 8v6M16 11h6"/></svg>
+                    </span>
                     达人联系
+                </a>
+                <a class="nav-item {% block nav_mailing %}{% endblock %}" href="{% url 'mailing:dashboard' %}">
+                    <span class="nav-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM4 7l8 6 8-6"/></svg>
+                    </span>
+                    邮件发送
                 </a>
 
                 <p class="nav-label nav-label-spaced">系统</p>
-                <a class="nav-item" href="{% url 'tasks:dashboard' %}#system-status">
-                    <span class="nav-icon" aria-hidden="true">⌁</span>
-                    运行状态
+                <a class="nav-item" href="{% url 'tasks:creator-data' %}#system-status">
+                    <span class="nav-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M4 18V9M10 18V5M16 18v-7M22 18V3"/></svg>
+                    </span>
+                    导入状态
                 </a>
                 <a class="nav-item" href="#settings" data-demo-action="设置功能将在后续版本开放">
-                    <span class="nav-icon" aria-hidden="true">⚙</span>
+                    <span class="nav-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg>
+                    </span>
                     系统设置
                 </a>
             </nav>
@@ -61,7 +73,7 @@
                     <span class="status-dot status-dot-live"></span>
                     本地开发环境
                 </div>
-                <p>Django + Agent Worker</p>
+                <p>Django + Import/Contact Workers</p>
             </div>
 
             <div class="profile-card">
@@ -93,7 +105,7 @@
                         <span></span>
                     </button>
                     {% block topbar_primary %}
-                    <a class="topbar-primary" href="{% url 'tasks:dashboard' %}#task-create">
+                    <a class="topbar-primary" href="{% url 'tasks:creator-data' %}#task-create">
                         <span aria-hidden="true">＋</span>
                         新建任务
                     </a>

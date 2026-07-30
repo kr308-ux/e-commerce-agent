@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from django import forms
+from django.core.exceptions import ValidationError
 
-from tasks.models import CreatorAcquisitionTask, Product
+from tasks.models import Creator, ImportTask
 
 from .models import (
     CreatorContactTask,
@@ -12,6 +13,12 @@ from .models import (
     GreetingTemplate,
 )
 from .services.candidate_selector import select_candidates
+
+
+def collaboration_option_label(
+    option: DirectedCollaborationOption,
+) -> str:
+    return f"{option.name} · ID {option.external_invitation_id}"
 
 
 class GreetingTemplateForm(forms.ModelForm):
@@ -57,33 +64,41 @@ class CreatorContactTaskForm(forms.ModelForm):
         max_length=80,
         widget=forms.HiddenInput(),
     )
-    confirm_send_greeting = forms.BooleanField(
-        label="确认发送招呼语",
-        required=True,
+    selection_method = forms.ChoiceField(
+        label="达人筛选规则",
+        choices=CreatorContactTask.SelectionMethod.choices,
+        initial=CreatorContactTask.SelectionMethod.SALES,
+        required=False,
+        widget=forms.RadioSelect(),
     )
-    confirm_send_invitation = forms.BooleanField(
-        label="确认发送定向合作邀请",
-        required=True,
+    sales_window_days = forms.TypedChoiceField(
+        label="销售额周期",
+        choices=((7, "近 7 天"), (30, "近 30 天"), (0, "总销售额")),
+        coerce=int,
+        initial=30,
+        required=False,
     )
-    confirm_send_card = forms.BooleanField(
-        label="确认批量发送定向合作卡片",
-        required=True,
+    selected_creator_ids = forms.MultipleChoiceField(
+        label="手动选择达人",
+        required=False,
     )
 
     class Meta:
         model = CreatorContactTask
         fields = [
             "store_id",
-            "source_product",
+            "source_import_task",
+            "selection_method",
+            "sales_window_days",
+            "selected_creator_ids",
             "top_n",
             "greeting_template",
             "collaboration_option",
-            "confirm_send_greeting",
-            "confirm_send_invitation",
-            "confirm_send_card",
         ]
         labels = {
-            "source_product": "关联商品",
+            "source_import_task": "达人导入批次",
+            "selection_method": "达人筛选规则",
+            "sales_window_days": "销售额周期",
             "top_n": "联系人数",
             "greeting_template": "招呼语模板",
             "collaboration_option": "定向合作选项",
@@ -98,11 +113,41 @@ class CreatorContactTaskForm(forms.ModelForm):
             or ""
         ).strip()
         self.fields["store_id"].initial = normalized_store
-        self.fields["source_product"].queryset = (
-            Product.objects
-            .filter(task__status=CreatorAcquisitionTask.Status.SUCCESS)
-            .select_related("task")
-            .order_by("-task__created_at", "id")
+        self.fields["source_import_task"].queryset = (
+            ImportTask.objects.filter(
+                status__in=[
+                    ImportTask.Status.SUCCESS,
+                    ImportTask.Status.PARTIAL_SUCCESS,
+                ],
+                imported_creators__isnull=False,
+            )
+            .distinct()
+            .order_by("-created_at")
+        )
+        self.fields["top_n"].required = False
+        source_import_task_id = (
+            self.data.get("source_import_task")
+            or getattr(self.instance, "source_import_task_id", None)
+            or getattr(self.initial.get("source_import_task"), "pk", None)
+            or self.initial.get("source_import_task")
+        )
+        selected_creator_choices: list[tuple[str, str]] = []
+        if source_import_task_id:
+            try:
+                selected_creator_choices = [
+                    (str(creator_id), str(creator_id))
+                    for creator_id in Creator.objects.filter(
+                        import_memberships__import_task_id=(
+                            source_import_task_id
+                        ),
+                    )
+                    .distinct()
+                    .values_list("pk", flat=True)
+                ]
+            except (ValidationError, ValueError):
+                selected_creator_choices = []
+        self.fields["selected_creator_ids"].choices = (
+            selected_creator_choices
         )
         greeting_queryset = GreetingTemplate.objects.filter(is_active=True)
         self.fields["greeting_template"].queryset = greeting_queryset
@@ -120,29 +165,98 @@ class CreatorContactTaskForm(forms.ModelForm):
                 is_active=True,
             )
         )
+        self.fields[
+            "collaboration_option"
+        ].label_from_instance = collaboration_option_label
         self.fields["collaboration_option"].required = True
 
     def clean(self) -> dict[str, object]:
         cleaned = super().clean()
         store_id = str(cleaned.get("store_id") or "").strip()
-        product = cleaned.get("source_product")
+        import_task = cleaned.get("source_import_task")
         invitation = cleaned.get("collaboration_option")
         top_n = cleaned.get("top_n")
+        selection_method = str(
+            cleaned.get("selection_method")
+            or CreatorContactTask.SelectionMethod.SALES
+        )
+        sales_window_days = cleaned.get("sales_window_days")
+        if sales_window_days in (None, ""):
+            sales_window_days = 30
+        sales_window_days = int(sales_window_days)
+        cleaned["selection_method"] = selection_method
+        cleaned["sales_window_days"] = sales_window_days
 
         if invitation is not None and invitation.store_id != store_id:
             self.add_error(
                 "collaboration_option",
                 "定向合作选项不属于当前店铺。",
             )
-        if product is not None and top_n:
-            selection = select_candidates(
-                product=product,
-                store_id=store_id,
-                top_n=int(top_n),
+        selection = None
+        selection_field = "source_import_task"
+        if selection_method == CreatorContactTask.SelectionMethod.SALES:
+            if not top_n:
+                self.add_error("top_n", "请输入需要联系的达人数。")
+                return cleaned
+            selection_kwargs = {
+                "top_n": int(top_n),
+                "sales_window_days": sales_window_days,
+            }
+        elif selection_method == CreatorContactTask.SelectionMethod.CREATOR_ID:
+            selection_kwargs = {"top_n": 50}
+        else:
+            selected_creator_ids = list(
+                cleaned.get("selected_creator_ids") or ()
             )
+            if not selected_creator_ids:
+                self.add_error(
+                    "selected_creator_ids",
+                    "请至少勾选一位达人。",
+                )
+                return cleaned
+            selection_field = "selected_creator_ids"
+            selection_kwargs = {
+                "selected_creator_pks": selected_creator_ids,
+            }
+
+        if import_task is not None and store_id:
+            try:
+                selection = select_candidates(
+                    import_task=import_task,
+                    store_id=store_id,
+                    selection_method=selection_method,
+                    **selection_kwargs,
+                )
+            except ValidationError as error:
+                self.add_error(
+                    (
+                        "sales_window_days"
+                        if selection_method
+                        == CreatorContactTask.SelectionMethod.SALES
+                        else selection_field
+                    ),
+                    error,
+                )
+                self.candidate_selection = None
+                return cleaned
+            if selection.unmatched_identifiers:
+                self.add_error(
+                    selection_field,
+                    "以下达人不在所选导入批次中："
+                    + "、".join(selection.unmatched_identifiers),
+                )
             if not selection.creators:
                 self.add_error(
-                    "source_product",
-                    "该商品没有尚未联系的达人。",
+                    selection_field,
+                    "没有可联系的达人，请检查选择或已联系记录。",
                 )
+            elif len(selection.creators) > 100:
+                self.add_error(
+                    selection_field,
+                    "单个联系任务最多可选择 100 位达人。",
+                )
+            else:
+                cleaned["top_n"] = len(selection.creators)
+                self.instance.top_n = len(selection.creators)
+        self.candidate_selection = selection
         return cleaned

@@ -1,8 +1,14 @@
 from decimal import Decimal
 
 from django.test import TestCase
+from django.utils import timezone
 
-from tasks.models import CreatorAcquisitionTask, Product, RelatedCreator
+from tasks.models import (
+    Creator,
+    CreatorSalesMetric,
+    ImportTask,
+    ImportTaskCreator,
+)
 
 from creator_contact.models import (
     CreatorContactTask,
@@ -18,46 +24,43 @@ class CreatorContactTestCase(TestCase):
         GreetingTemplate.objects.filter(is_default=True).update(
             is_default=False
         )
-        self.acquisition_task = CreatorAcquisitionTask.objects.create(
-            product_limit=10,
-            status=CreatorAcquisitionTask.Status.SUCCESS,
+        now = timezone.now()
+        self.import_task = ImportTask.objects.create(
+            file_name="creator-batch.xlsx",
+            file_sha256="a" * 64,
+            sheet_name="Creators",
+            status=ImportTask.Status.SUCCESS,
+            snapshot_date=timezone.localdate(),
+            confirmed_at=now,
+            finished_at=now,
         )
-        self.product = Product.objects.create(
-            task=self.acquisition_task,
-            external_product_id="1731795774080652206",
-            name="Third Product",
-            product_url=(
-                "https://www.chuhaijiang.com/app/discover/tiktok/products/"
-                "1731795774080652206?country=US"
-            ),
+        self.high = self.create_creator(
+            "Highest",
+            "Highest Creator",
+            revenue_30=Decimal("500.00"),
+            revenue_7=Decimal("10.00"),
+            row=2,
         )
-        self.high = RelatedCreator.objects.create(
-            product=self.product,
-            creator_handle="Highest",
-            nickname="Highest Creator",
-            recent_30_day_revenue=Decimal("500.00"),
-            recent_7_day_revenue=Decimal("10.00"),
+        self.middle = self.create_creator(
+            "@Middle",
+            "Middle Creator",
+            revenue_30=Decimal("300.00"),
+            revenue_7=Decimal("80.00"),
+            row=3,
         )
-        self.middle = RelatedCreator.objects.create(
-            product=self.product,
-            creator_handle="@Middle",
-            nickname="Middle Creator",
-            recent_30_day_revenue=Decimal("300.00"),
-            recent_7_day_revenue=Decimal("80.00"),
+        self.low = self.create_creator(
+            "low",
+            "Low Creator",
+            revenue_30=Decimal("100.00"),
+            revenue_7=Decimal("90.00"),
+            row=4,
         )
-        self.low = RelatedCreator.objects.create(
-            product=self.product,
-            creator_handle="low",
-            nickname="Low Creator",
-            recent_30_day_revenue=Decimal("100.00"),
-            recent_7_day_revenue=Decimal("90.00"),
-        )
-        self.null_revenue = RelatedCreator.objects.create(
-            product=self.product,
-            creator_handle="null_revenue",
-            nickname="Null Revenue",
-            recent_30_day_revenue=None,
-            recent_7_day_revenue=Decimal("1000.00"),
+        self.null_revenue = self.create_creator(
+            "null_revenue",
+            "Null Revenue",
+            revenue_30=None,
+            revenue_7=Decimal("1000.00"),
+            row=5,
         )
         self.greeting = GreetingTemplate.objects.create(
             name="Default Greeting",
@@ -71,14 +74,52 @@ class CreatorContactTestCase(TestCase):
             status=DirectedCollaborationOption.Status.ONGOING,
         )
 
+    def create_creator(
+        self,
+        creator_id: str,
+        nickname: str,
+        *,
+        revenue_30: Decimal | None,
+        revenue_7: Decimal | None,
+        row: int,
+        revenue_total: Decimal | None = None,
+        import_task: ImportTask | None = None,
+    ) -> Creator:
+        batch = import_task or self.import_task
+        creator, _ = Creator.objects.get_or_create(
+            creator_id=creator_id,
+            defaults={"nickname": nickname},
+        )
+        ImportTaskCreator.objects.get_or_create(
+            import_task=batch,
+            creator=creator,
+            defaults={"first_row_number": row},
+        )
+        for window, amount in (
+            (30, revenue_30),
+            (7, revenue_7),
+            (0, revenue_total),
+        ):
+            if amount is not None:
+                CreatorSalesMetric.objects.create(
+                    creator=creator,
+                    import_task=batch,
+                    window_days=window,
+                    sales_amount=amount,
+                    snapshot_date=batch.snapshot_date,
+                    source_row_number=row,
+                )
+        return creator
+
     def create_contact_task(
         self,
         *,
         top_n: int = 2,
+        import_task: ImportTask | None = None,
     ) -> CreatorContactTask:
         return CreatorContactTask.objects.create(
             store_id=self.store_id,
-            source_product=self.product,
+            source_import_task=import_task or self.import_task,
             top_n=top_n,
             greeting_template=self.greeting,
             greeting_snapshot=self.greeting.content,

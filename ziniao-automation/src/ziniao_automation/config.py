@@ -67,6 +67,12 @@ class ZiniaoSettings:
     reuse_browser_session: bool = True
     browser_probe_timeout_seconds: float = 2.0
     browser_lock_timeout_seconds: float = 30.0
+    browser_home_timeout_seconds: float = 60.0
+    browser_home_stable_seconds: float = 2.0
+    browser_login_wait_seconds: float = 0.0
+    browser_status_path: Path = (
+        PROJECT_ROOT / "temporary" / "ziniao-browser-status.json"
+    )
 
     @classmethod
     def from_env(
@@ -94,6 +100,14 @@ class ZiniaoSettings:
             browser_session_setting = (
                 PROJECT_ROOT / browser_session_setting
             )
+        browser_status_setting = Path(
+            os.getenv(
+                "ZINIAO_BROWSER_STATUS_PATH",
+                "temporary/ziniao-browser-status.json",
+            )
+        )
+        if not browser_status_setting.is_absolute():
+            browser_status_setting = PROJECT_ROOT / browser_status_setting
         settings = cls(
             credentials=credentials or ZiniaoCredentials.from_env(),
             client_path=Path(os.getenv("ZINIAO_CLIENT_PATH", client_default)),
@@ -116,6 +130,16 @@ class ZiniaoSettings:
             browser_lock_timeout_seconds=float(
                 os.getenv("ZINIAO_BROWSER_LOCK_TIMEOUT_SECONDS", "30")
             ),
+            browser_home_timeout_seconds=float(
+                os.getenv("ZINIAO_BROWSER_HOME_TIMEOUT_SECONDS", "60")
+            ),
+            browser_home_stable_seconds=float(
+                os.getenv("ZINIAO_BROWSER_HOME_STABLE_SECONDS", "2")
+            ),
+            browser_login_wait_seconds=float(
+                os.getenv("ZINIAO_BROWSER_LOGIN_WAIT_SECONDS", "0")
+            ),
+            browser_status_path=browser_status_setting.resolve(),
         )
         settings.validate()
         return settings
@@ -142,4 +166,16 @@ class ZiniaoSettings:
         if self.browser_lock_timeout_seconds <= 0:
             raise ZiniaoConfigurationError(
                 "ZINIAO_BROWSER_LOCK_TIMEOUT_SECONDS 必须大于 0。"
+            )
+        if self.browser_home_timeout_seconds <= 0:
+            raise ZiniaoConfigurationError(
+                "ZINIAO_BROWSER_HOME_TIMEOUT_SECONDS 必须大于 0。"
+            )
+        if self.browser_home_stable_seconds < 0:
+            raise ZiniaoConfigurationError(
+                "ZINIAO_BROWSER_HOME_STABLE_SECONDS 不能小于 0。"
+            )
+        if self.browser_login_wait_seconds < 0:
+            raise ZiniaoConfigurationError(
+                "ZINIAO_BROWSER_LOGIN_WAIT_SECONDS 不能小于 0。"
             )

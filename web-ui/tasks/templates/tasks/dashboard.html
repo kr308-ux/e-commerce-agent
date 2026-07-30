@@ -1,121 +1,300 @@
 {% extends "tasks/base.html" %}
 
-{% block title %}获取达人数据 · E-commerce Agent{% endblock %}
+{% block title %}工作台 · E-commerce Agent{% endblock %}
 {% block nav_dashboard %}is-active{% endblock %}
+{% block topbar_title %}运营工作台{% endblock %}
+{% block topbar_subtitle %}
+<small class="topbar-context">{{ store_id|default:"全局视图" }}</small>
+{% endblock %}
+{% block topbar_primary %}
+<a class="topbar-primary" href="{% url 'creator_contact:dashboard' %}#contact-task-create">
+    <span aria-hidden="true">＋</span>
+    联系达人
+</a>
+{% endblock %}
 
 {% block content %}
-<section class="welcome-row">
+<section class="workbench-hero">
     <div>
-        <p class="eyebrow">CREATOR DATA ACQUISITION</p>
-        <h1>获取达人数据</h1>
-        <p class="welcome-copy">由 DeepSeek 通过 Chrome MCP 采集商品，并导出、解析每个商品的关联达人数据。</p>
+        <p class="eyebrow">OPERATIONS OVERVIEW</p>
+        <h1>工作台</h1>
+        <p class="welcome-copy">集中查看达人沉淀、联系进展与邮件触达状态。</p>
     </div>
-    <div class="date-card">
-        <span class="date-day">{{ now|date:"d" }}</span>
-        <span><strong>{{ now|date:"l" }}</strong><small>{{ now|date:"Y年n月" }}</small></span>
+    <div class="workbench-hero-meta">
+        <div class="date-card">
+            <span class="date-day">{{ now|date:"d" }}</span>
+            <span>
+                <strong>{{ now|date:"l" }}</strong>
+                <small>{{ now|date:"Y年n月" }}</small>
+            </span>
+        </div>
+        <button class="refresh-button" type="button" data-refresh-page>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/>
+            </svg>
+            刷新数据
+        </button>
     </div>
 </section>
 
-<section class="metric-grid" aria-label="任务概览">
-    <article class="metric-card metric-dark">
-        <div class="metric-topline"><span>今日任务</span><span class="metric-icon">↗</span></div>
-        <strong class="metric-value">{{ today_count|stringformat:"02d" }}</strong>
-        <p>所有数据来自本地任务数据库</p>
-    </article>
-    <article class="metric-card">
-        <div class="metric-topline"><span>执行中</span><span class="metric-badge metric-badge-blue">RUNNING</span></div>
-        <strong class="metric-value">{{ running_count|stringformat:"02d" }}</strong>
-        <p>由独立 Agent Worker 执行</p>
-    </article>
-    <article class="metric-card">
-        <div class="metric-topline"><span>等待队列</span><span class="metric-badge metric-badge-amber">PENDING</span></div>
-        <strong class="metric-value">{{ pending_count|stringformat:"02d" }}</strong>
-        <p>按创建时间依次处理</p>
-    </article>
-    <article class="metric-card">
-        <div class="metric-topline"><span>完成任务</span><span class="metric-icon metric-icon-light">✓</span></div>
-        <strong class="metric-value">{{ success_count|stringformat:"02d" }}</strong>
-        <p>商品与达人均已入库</p>
-    </article>
-</section>
-
-<div class="dashboard-grid">
-    <section class="panel create-panel" id="task-create">
-        <div class="panel-heading">
-            <div><span class="section-kicker">NEW TASK</span><h2>创建获取达人数据任务</h2></div>
-            <span class="demo-tag">LIVE</span>
+<section class="overview-section" aria-labelledby="creator-overview-title">
+    <div class="section-title-row">
+        <div>
+            <span class="section-kicker">CREATOR OUTREACH</span>
+            <h2 id="creator-overview-title">达人联系</h2>
         </div>
-        <form class="task-form" method="post">
-            {% csrf_token %}
-            <div class="task-type-card is-selected creator-task-card">
-                <span class="task-type-icon chrome-icon">C</span>
-                <span><strong>Chrome 商品关联达人采集</strong><small>运动与户外 → 运动服饰 → 商品详情 → 导出 100 条达人</small></span>
-                <i class="radio-mark"></i>
-            </div>
-
-            <label class="field-label" for="{{ form.product_limit.id_for_label }}">
-                {{ form.product_limit.label }}
-                <span>数量必须是 10 的倍数，范围 10–100</span>
-            </label>
-            {{ form.product_limit }}
-            {% if form.product_limit.errors %}
-                <div class="form-error">{{ form.product_limit.errors|join:"；" }}</div>
-            {% endif %}
-            <p class="field-help">{{ form.product_limit.help_text }}</p>
-
-            <div class="workflow-preview">
-                <span>1</span>采集商品
-                <i>→</i><span>2</span>打开详情
-                <i>→</i><span>3</span>导出达人
-                <i>→</i><span>4</span>写入数据库
-            </div>
-            <div class="form-footer">
-                <p><span class="status-dot status-dot-live"></span> DeepSeek V4 Flash · Chrome Data MCP</p>
-                <button class="create-button" type="submit">创建任务 <span>→</span></button>
-            </div>
-        </form>
-    </section>
-
-    <aside class="panel runtime-panel" id="system-status">
-        <div class="panel-heading">
-            <div><span class="section-kicker">RUNTIME</span><h2>执行边界</h2></div>
-        </div>
-        <div class="runtime-stack">
-            <div class="runtime-item"><span class="runtime-logo logo-opencode">OC</span><span class="runtime-copy"><strong>OpenCode</strong><small>Agent Runtime</small></span><span class="runtime-state state-live">READY</span></div>
-            <div class="runtime-connector"></div>
-            <div class="runtime-item"><span class="runtime-logo logo-deepseek">DS</span><span class="runtime-copy"><strong>DeepSeek</strong><small>规划并调用 MCP</small></span><span class="runtime-state state-live">CONFIGURED</span></div>
-            <div class="runtime-connector"></div>
-            <div class="runtime-item"><span class="runtime-logo logo-mcp">M</span><span class="runtime-copy"><strong>Chrome Data MCP</strong><small>CDP、点击、导出</small></span><span class="runtime-state state-live">CONFIGURED</span></div>
-        </div>
-        <p class="runtime-note">Django HTTP 只创建任务和展示结果；浏览器操作在独立 Worker 进程中完成。</p>
-    </aside>
-</div>
-
-<section class="panel task-table-panel" id="recent-tasks">
-    <div class="panel-heading table-heading">
-        <div><span class="section-kicker">RECENT TASKS</span><h2>获取达人数据记录</h2></div>
+        <a class="section-link" href="{% url 'creator_contact:dashboard' %}">
+            查看达人联系
+            <span aria-hidden="true">→</span>
+        </a>
     </div>
-    <div class="table-wrap">
-        <table>
-            <thead><tr><th>任务</th><th>商品目标</th><th>状态</th><th>进度</th><th>结果</th><th>更新时间</th><th></th></tr></thead>
-            <tbody>
-            {% for task in recent_tasks %}
-                <tr>
-                    <td><a class="task-name" href="{% url 'tasks:task-detail' task.id %}"><span class="task-id">#{{ task.id|stringformat:"s"|slice:":8" }}</span><strong>{{ task.name }}</strong></a></td>
-                    <td>{{ task.product_limit }} 个</td>
-                    <td><span class="status-pill status-{{ task.status|lower }}"><i></i>{{ task.get_status_display }}</span></td>
-                    <td><div class="table-progress"><span style="width: {{ task.progress }}%"></span><b>{{ task.progress }}%</b></div></td>
-                    <td>{{ task.product_count }} 商品 / {{ task.creator_count }} 达人</td>
-                    <td><span class="time-cell">{{ task.updated_at|timesince }}前<small>{{ task.updated_at|date:"m-d H:i:s" }}</small></span></td>
-                    <td><a class="row-arrow" href="{% url 'tasks:task-detail' task.id %}" aria-label="查看任务">→</a></td>
-                </tr>
-            {% empty %}
-                <tr><td colspan="7" class="empty-cell">还没有任务。先创建一个 10 个商品的采集任务。</td></tr>
-            {% endfor %}
-            </tbody>
-        </table>
+    <div class="workbench-metrics creator-metrics">
+        <article class="overview-card overview-card-primary">
+            <span class="overview-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/>
+                </svg>
+            </span>
+            <span class="overview-label">达人总数</span>
+            <strong>{{ creator_total }}</strong>
+            <small>按达人账号全局去重</small>
+        </article>
+        <article class="overview-card">
+            <span class="overview-icon overview-icon-green">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 5v14M5 12h14"/>
+                </svg>
+            </span>
+            <span class="overview-label">今日新增达人</span>
+            <strong>{{ creator_today }}</strong>
+            <small>今日首次进入达人库</small>
+        </article>
+        <article class="overview-card">
+            <span class="overview-icon overview-icon-blue">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m5 12 4 4L19 6"/>
+                </svg>
+            </span>
+            <span class="overview-label">今日联系成功</span>
+            <strong>{{ contact_today }}</strong>
+            <small>当前店铺今日成功人数</small>
+        </article>
+        <article class="overview-card">
+            <span class="overview-icon overview-icon-violet">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z"/>
+                    <path d="m8 11 2.5 2.5L16 8"/>
+                </svg>
+            </span>
+            <span class="overview-label">联系成功总数</span>
+            <strong>{{ contact_total }}</strong>
+            <small>{% if store_id %}店铺 {{ store_id }}{% else %}全部店铺{% endif %}</small>
+        </article>
     </div>
 </section>
 
-<footer class="page-footer"><span><i></i> E-commerce Agent · Creator Data</span><span>本地 SQLite · 敏感配置不写入日志</span></footer>
+<section class="overview-section" aria-labelledby="email-overview-title">
+    <div class="section-title-row">
+        <div>
+            <span class="section-kicker">EMAIL DELIVERY</span>
+            <h2 id="email-overview-title">邮件触达</h2>
+        </div>
+        <a class="section-link" href="{% url 'mailing:dashboard' %}">
+            查看邮件队列
+            <span aria-hidden="true">→</span>
+        </a>
+    </div>
+    <div class="workbench-metrics email-metrics">
+        <article class="overview-card">
+            <span class="overview-icon overview-icon-green">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 4h16v16H4zM4 7l8 6 8-6"/>
+                </svg>
+            </span>
+            <span class="overview-label">今日成功触达</span>
+            <strong>{{ email_today }}</strong>
+            <small>今日发送成功邮件</small>
+        </article>
+        <article class="overview-card overview-card-waiting">
+            <span class="overview-icon overview-icon-amber">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9"/>
+                    <path d="M12 7v5l3 2"/>
+                </svg>
+            </span>
+            <span class="overview-label">队列等待</span>
+            <strong>{{ email_pending }}</strong>
+            <small>按入队时间串行处理</small>
+        </article>
+        <article class="overview-card">
+            <span class="overview-icon overview-icon-blue">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m22 2-7 20-4-9-9-4 20-7Z"/>
+                    <path d="M22 2 11 13"/>
+                </svg>
+            </span>
+            <span class="overview-label">邮件发送总数</span>
+            <strong>{{ email_total }}</strong>
+            <small>累计发送成功</small>
+        </article>
+    </div>
+</section>
+
+<section class="execution-section" aria-labelledby="execution-title">
+    <div class="section-title-row">
+        <div>
+            <span class="section-kicker">IN PROGRESS</span>
+            <h2 id="execution-title">正在执行任务</h2>
+        </div>
+        {% if latest_update %}
+        <span class="last-update">最近更新 {{ latest_update|timesince }}前</span>
+        {% endif %}
+    </div>
+    <div class="execution-grid">
+        <article class="execution-panel">
+            <header class="execution-heading">
+                <span class="execution-heading-icon contact-task-icon">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z"/>
+                    </svg>
+                </span>
+                <span>
+                    <strong>联系达人任务</strong>
+                    <small>自动化联系与合作邀请</small>
+                </span>
+                <span class="queue-count">{{ contact_pending }} 个排队</span>
+            </header>
+            <div class="execution-list">
+                {% for task in active_contact_tasks %}
+                <a class="execution-item" href="{% url 'creator_contact:task_detail' task.id %}">
+                    <span class="execution-item-top">
+                        <span>
+                            <strong>{{ task.name }}</strong>
+                            <small>{{ task.current_step|default:"等待 Worker 领取任务" }}</small>
+                        </span>
+                        <b>{{ task.progress }}%</b>
+                    </span>
+                    <span class="execution-progress">
+                        <i style="width: {{ task.progress }}%"></i>
+                    </span>
+                    <span class="execution-item-meta">
+                        <span class="task-state task-state-{{ task.status|lower }}">
+                            <i></i>{{ task.get_status_display }}
+                        </span>
+                        <span>{{ task.updated_at|timesince }}前更新</span>
+                    </span>
+                </a>
+                {% empty %}
+                <div class="execution-empty">
+                    <span>✓</span>
+                    <strong>暂无执行中的联系任务</strong>
+                    <small>新任务会在这里展示实时进度</small>
+                </div>
+                {% endfor %}
+            </div>
+            <a class="execution-footer-link" href="{% url 'creator_contact:dashboard' %}">
+                管理联系任务 <span>→</span>
+            </a>
+        </article>
+
+        <article class="execution-panel">
+            <header class="execution-heading">
+                <span class="execution-heading-icon email-task-icon">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M4 5h16v14H4zM4 7l8 6 8-6"/>
+                    </svg>
+                </span>
+                <span>
+                    <strong>邮件发送队列</strong>
+                    <small>单封邮件串行发送</small>
+                </span>
+                <span class="queue-count">{{ email_pending }} 个排队</span>
+            </header>
+            <div class="execution-list">
+                {% for delivery in active_email_deliveries %}
+                <a class="execution-item" href="{% url 'mailing:dashboard' %}#delivery-{{ delivery.id }}">
+                    <span class="execution-item-top">
+                        <span>
+                            <strong>{{ delivery.creator_name_snapshot }}</strong>
+                            <small>{{ delivery.recipient_email }}</small>
+                        </span>
+                        <b>{{ delivery.ui_progress }}%</b>
+                    </span>
+                    <span class="execution-progress email-progress">
+                        <i style="width: {{ delivery.ui_progress }}%"></i>
+                    </span>
+                    <span class="execution-item-meta">
+                        <span class="task-state task-state-{{ delivery.status|lower }}">
+                            <i></i>{{ delivery.get_status_display }}
+                        </span>
+                        <span>第 {{ delivery.attempt_count }} 次尝试</span>
+                    </span>
+                </a>
+                {% empty %}
+                <div class="execution-empty">
+                    <span>✓</span>
+                    <strong>邮件队列当前为空</strong>
+                    <small>新增收件人后会按顺序发送</small>
+                </div>
+                {% endfor %}
+            </div>
+            <a class="execution-footer-link" href="{% url 'mailing:dashboard' %}">
+                管理邮件队列 <span>→</span>
+            </a>
+        </article>
+    </div>
+</section>
+
+<section class="feature-section" aria-labelledby="feature-title">
+    <div class="section-title-row">
+        <div>
+            <span class="section-kicker">QUICK ACTIONS</span>
+            <h2 id="feature-title">常用功能</h2>
+        </div>
+    </div>
+    <div class="feature-grid">
+        <a class="feature-card" href="{% url 'tasks:creator-data' %}">
+            <span class="feature-icon feature-icon-data">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <ellipse cx="12" cy="5" rx="8" ry="3"/>
+                    <path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>
+                </svg>
+            </span>
+            <span>
+                <strong>达人数据导入</strong>
+                <small>上传表格、审阅转换并确认导入</small>
+            </span>
+            <i>→</i>
+        </a>
+        <a class="feature-card" href="{% url 'creator_contact:dashboard' %}">
+            <span class="feature-icon feature-icon-contact">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M19 8v6M16 11h6"/>
+                </svg>
+            </span>
+            <span>
+                <strong>联系达人</strong>
+                <small>配置招呼语并创建合作邀请</small>
+            </span>
+            <i>→</i>
+        </a>
+        <a class="feature-card" href="{% url 'mailing:dashboard' %}">
+            <span class="feature-icon feature-icon-mail">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 5h16v14H4zM4 7l8 6 8-6"/>
+                </svg>
+            </span>
+            <span>
+                <strong>邮件发送</strong>
+                <small>创建邮件队列并查看投递结果</small>
+            </span>
+            <i>→</i>
+        </a>
+    </div>
+</section>
+
+<footer class="page-footer">
+    <span><i></i> E-commerce Agent · Operations Console</span>
+    <span>数据按 Asia/Shanghai 时区统计</span>
+</footer>
 {% endblock %}

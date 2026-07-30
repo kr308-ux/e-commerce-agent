@@ -28,7 +28,7 @@ from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.support.ui import WebDriverWait
 
-from ..config import PROJECT_ROOT
+from ..dom_fallback import DeepSeekDomFallback, is_dom_failure_message
 from ..errors import ZiniaoWorkflowError
 
 
@@ -39,6 +39,80 @@ APPROVED_GREETING_MESSAGE = (
     "We sent you an official collab invite: free samples + high commission 🎁💰\n"
     "Accept it in your TikTok dashboard to get your products ASAP 🚀\n"
     "Let’s partner long term and make great content together! 🤩"
+)
+
+FIND_CREATORS_RENDER_WAIT_SECONDS = 3.0
+
+FIND_CREATORS_OBSTRUCTION_CLOSE_SELECTORS = (
+    (
+        By.CSS_SELECTOR,
+        (
+            "#garfish_app_for_connection_x3s3dld3 > div > "
+            "div:nth-child(2) > div.mb-16.rounded-8 > div > div > div > "
+            "div.mb-16 > div > "
+            "div.transition-all.duration-300.ease-out.opacity-100 > div > "
+            "div > div > div > div.mt-10.flex.items-center."
+            "justify-between.gap-12 > "
+            "div.flex.flex-none.items-center.gap-20.pl-8 > "
+            "div > div > button"
+        ),
+    ),
+    (
+        By.CSS_SELECTOR,
+        (
+            '[id^="garfish_app_for_connection_"] > div > '
+            "div:nth-child(2) > div.mb-16.rounded-8 > div > div > div > "
+            "div.mb-16 > div > "
+            "div.transition-all.duration-300.ease-out.opacity-100 > div > "
+            "div > div > div > div.mt-10.flex.items-center."
+            "justify-between.gap-12 > "
+            "div.flex.flex-none.items-center.gap-20.pl-8 > "
+            "div > div > button"
+        ),
+    ),
+    (
+        By.CSS_SELECTOR,
+        (
+            '[id^="garfish_app_for_connection_"] '
+            "div.transition-all.duration-300.ease-out.opacity-100 > "
+            "div.flex.h-32.flex-none.items-center.gap-8 "
+            'button[role="switch"]'
+        ),
+    ),
+    (
+        By.CSS_SELECTOR,
+        (
+            "#garfish_app_for_connection_0lgo6vyn > div > "
+            "div:nth-child(2) > div.mb-16.rounded-8 > div > div > div > "
+            "div.mb-16 > div > "
+            "div.transition-all.duration-300.ease-out.opacity-100 > div > "
+            "div.flex.h-32.flex-none.items-center.gap-8 > div > button"
+        ),
+    ),
+    (
+        By.CSS_SELECTOR,
+        (
+            '[id^="garfish_app_for_connection_"] > div > '
+            "div:nth-child(2) > div.mb-16.rounded-8 > div > div > div > "
+            "div.mb-16 > div > "
+            "div.transition-all.duration-300.ease-out.opacity-100 > div > "
+            "div.flex.h-32.flex-none.items-center.gap-8 > div > button"
+        ),
+    ),
+)
+
+FIND_CREATORS_SEARCH_SELECTORS = (
+    (By.CSS_SELECTOR, "input.core-input[type='text']"),
+    (By.CSS_SELECTOR, "input[placeholder*='搜索姓名']"),
+    (By.CSS_SELECTOR, "input[placeholder*='Search']"),
+    (
+        By.XPATH,
+        "//input[@type='text' and "
+        "(contains(@placeholder, '姓名') "
+        "or contains(@placeholder, '达人') "
+        "or contains(@placeholder, 'Search') "
+        "or contains(@placeholder, 'search'))]",
+    ),
 )
 
 
@@ -56,9 +130,16 @@ class WorkflowStepResult:
 class CreatorContactWorkflow:
     """Operate the TikTok Shop affiliate UI one verified step at a time."""
 
-    def __init__(self, driver: WebDriver, *, timeout_seconds: int = 30):
+    def __init__(
+        self,
+        driver: WebDriver,
+        *,
+        timeout_seconds: int = 30,
+        dom_fallback: DeepSeekDomFallback | None = None,
+    ):
         self.driver = driver
         self.timeout_seconds = timeout_seconds
+        self.dom_fallback = dom_fallback
         self._action_wait_seconds: list[float] = []
         self._refresh_wait_seconds: list[float] = []
         self._verified_recipient: tuple[str, str] | None = None
@@ -387,9 +468,15 @@ class CreatorContactWorkflow:
         *,
         validator: Callable[[WebElement], bool] | None = None,
         validation_message: str = "等待后点击目标已不再满足任务约束。",
+        fixed_wait_seconds: float | None = None,
     ) -> None:
         fingerprint = self._click_fingerprint(element)
-        self._random_pause(3.0, 5.0)
+        if fixed_wait_seconds is None:
+            self._random_pause(1.0, 2.0)
+        else:
+            wait_seconds = round(float(fixed_wait_seconds), 3)
+            self._action_wait_seconds.append(wait_seconds)
+            time.sleep(wait_seconds)
         target: WebElement | None = element
         last_stale: Exception | None = None
         for attempt in range(3):
@@ -446,8 +533,10 @@ class CreatorContactWorkflow:
         missing_message: str,
         timeout_seconds: int | None = None,
     ) -> WebElement:
+        selector_list = tuple(selectors)
+
         def find(driver: WebDriver) -> WebElement | bool:
-            for by, value in selectors:
+            for by, value in selector_list:
                 for element in driver.find_elements(by, value):
                     try:
                         if element.is_displayed() and element.is_enabled():
@@ -456,22 +545,50 @@ class CreatorContactWorkflow:
                         continue
             return False
 
-        return self._wait(
-            find,
-            message=missing_message,
-            timeout_seconds=timeout_seconds,
+        try:
+            return self._wait(
+                find,
+                message=missing_message,
+                timeout_seconds=timeout_seconds,
+            )
+        except ZiniaoWorkflowError:
+            recovered: WebElement | None = None
+            if self.dom_fallback is not None:
+                recovered = self.dom_fallback.locate(
+                    self.driver,
+                    purpose=missing_message,
+                    attempted_selectors=selector_list,
+                )
+            late_local_match = find(self.driver)
+            if late_local_match is not False:
+                return late_local_match
+            if recovered is not None:
+                return recovered
+            raise
+
+    def consume_dom_fallback_events(self) -> list[dict[str, Any]]:
+        if self.dom_fallback is None:
+            return []
+        return self.dom_fallback.consume_events()
+
+    def diagnose_dom_failure(
+        self,
+        *,
+        step_name: str,
+        error_message: str,
+    ) -> dict[str, Any]:
+        if (
+            self.dom_fallback is None
+            or not is_dom_failure_message(error_message)
+        ):
+            return {}
+        return self.dom_fallback.diagnose_failure(
+            self.driver,
+            step_name=step_name,
+            error_message=error_message,
         )
 
     def _failure_evidence(self, step: int) -> dict[str, Any]:
-        artifact_dir = PROJECT_ROOT / "temporary" / "ziniao-contact"
-        screenshot_path = artifact_dir / f"step-{step}-failure.png"
-        screenshot = ""
-        try:
-            artifact_dir.mkdir(parents=True, exist_ok=True)
-            self.driver.save_screenshot(str(screenshot_path))
-            screenshot = str(screenshot_path)
-        except Exception:
-            pass
         try:
             frame_count = len(self.driver.find_elements(By.CSS_SELECTOR, "iframe"))
         except Exception:
@@ -480,7 +597,7 @@ class CreatorContactWorkflow:
             "currentUrl": self.driver.current_url,
             "title": self.driver.title,
             "iframeCount": frame_count,
-            "screenshot": screenshot,
+            "domOnlyDiagnostics": True,
         }
 
     def _window_targets(self) -> dict[str, dict[str, str]]:
@@ -637,6 +754,76 @@ class CreatorContactWorkflow:
             == "/connection/creator"
         )
 
+    @staticmethod
+    def _store_page_priority(url: object) -> int:
+        parsed = urlparse(str(url or "").strip())
+        host = (parsed.hostname or "").lower().rstrip(".")
+        path = parsed.path.lower().rstrip("/")
+        if parsed.scheme not in {"http", "https"}:
+            return 0
+        is_tiktok_shop = (
+            host == "tiktokshopglobalselling.com"
+            or host.endswith(".tiktokshopglobalselling.com")
+            or host == "tiktokglobalshop.com"
+            or host.endswith(".tiktokglobalshop.com")
+            or host == "tiktokshop.com"
+            or host.endswith(".tiktokshop.com")
+        )
+        if not is_tiktok_shop or path.startswith(
+            ("/login", "/signin", "/account/login")
+        ):
+            return 0
+        if path == "/connection/creator":
+            return 3
+        if host.startswith("affiliate.") or "/affiliate" in path:
+            return 2
+        if host.startswith(("seller.", "shop.")):
+            return 1
+        return 0
+
+    def _activate_available_store_page(self) -> dict[str, str] | None:
+        targets = self._window_targets()
+        candidates = sorted(
+            (
+                (
+                    self._store_page_priority(target.get("url")),
+                    handle,
+                    str(target.get("url") or ""),
+                )
+                for handle, target in targets.items()
+            ),
+            reverse=True,
+        )
+        for priority, handle, _target_url in candidates:
+            if priority <= 0:
+                continue
+            try:
+                self.driver.switch_to.window(handle)
+                current_url = str(self.driver.current_url or "")
+                if self._store_page_priority(current_url) <= 0:
+                    continue
+                self._wait_for_document()
+                return {"handle": handle, "url": current_url}
+            except Exception:
+                continue
+        try:
+            handles = list(self.driver.window_handles)
+        except Exception:
+            handles = []
+        for handle in handles:
+            if handle in targets:
+                continue
+            try:
+                self.driver.switch_to.window(handle)
+                current_url = str(self.driver.current_url or "")
+                if self._store_page_priority(current_url) <= 0:
+                    continue
+                self._wait_for_document()
+                return {"handle": handle, "url": current_url}
+            except Exception:
+                continue
+        return None
+
     def _activate_existing_find_creators(self) -> dict[str, Any] | None:
         targets = self._window_targets()
         candidates = [
@@ -701,22 +888,9 @@ class CreatorContactWorkflow:
         }
 
     def _visible_find_creators_search_inputs(self) -> list[WebElement]:
-        selectors = (
-            (By.CSS_SELECTOR, "input.core-input[type='text']"),
-            (By.CSS_SELECTOR, "input[placeholder*='搜索姓名']"),
-            (By.CSS_SELECTOR, "input[placeholder*='Search']"),
-            (
-                By.XPATH,
-                "//input[@type='text' and "
-                "(contains(@placeholder, '姓名') "
-                "or contains(@placeholder, '达人') "
-                "or contains(@placeholder, 'Search') "
-                "or contains(@placeholder, 'search'))]",
-            ),
-        )
         visible: list[WebElement] = []
         seen: set[str] = set()
-        for by, selector in selectors:
+        for by, selector in FIND_CREATORS_SEARCH_SELECTORS:
             for element in self.driver.find_elements(by, selector):
                 try:
                     identity = str(getattr(element, "id", "") or id(element))
@@ -737,9 +911,17 @@ class CreatorContactWorkflow:
         self._wait_for_document()
         reused_find_creators = self._activate_existing_find_creators()
         existing_page_reloaded_for_recovery = False
+        obstruction_evidence: dict[str, Any] | None = None
         if reused_find_creators is not None:
             try:
                 self._wait_for_document()
+                time.sleep(FIND_CREATORS_RENDER_WAIT_SECONDS)
+                obstruction_evidence = (
+                    self._close_find_creators_obstruction()
+                )
+                obstruction_evidence[
+                    "findCreatorsRenderWaitSeconds"
+                ] = FIND_CREATORS_RENDER_WAIT_SECONDS
                 self._wait(
                     lambda _driver: (
                         self._visible_find_creators_search_inputs() or False
@@ -758,6 +940,17 @@ class CreatorContactWorkflow:
                     self.driver.get(recovery_url)
                     self._wait_for_document()
                     existing_page_reloaded_for_recovery = True
+                    obstruction_evidence = None
+        if reused_find_creators is None:
+            self._wait(
+                lambda _driver: (
+                    self._activate_available_store_page() or False
+                ),
+                message=(
+                    "第 1 步失败：紫鸟浏览器未出现可用的 "
+                    "TikTok Shop 店铺或联盟页面。"
+                ),
+            )
         started_url = self.driver.current_url
         affiliate_url = started_url
 
@@ -841,11 +1034,17 @@ class CreatorContactWorkflow:
             )
         self._find_creators_handle = self.driver.current_window_handle
         self._find_creators_url = final_url
-        search_inputs = self._wait(
-            lambda _driver: (
-                self._visible_find_creators_search_inputs() or False
-            ),
-            message=(
+        if obstruction_evidence is None:
+            time.sleep(FIND_CREATORS_RENDER_WAIT_SECONDS)
+            obstruction_evidence = (
+                self._close_find_creators_obstruction()
+            )
+            obstruction_evidence[
+                "findCreatorsRenderWaitSeconds"
+            ] = FIND_CREATORS_RENDER_WAIT_SECONDS
+        search_input = self._first_clickable(
+            FIND_CREATORS_SEARCH_SELECTORS,
+            missing_message=(
                 "第 1 步验收失败：“查找达人”列表页未显示可用搜索框。"
             ),
         )
@@ -878,7 +1077,8 @@ class CreatorContactWorkflow:
                 "existingPageReloadedForRecovery": (
                     existing_page_reloaded_for_recovery
                 ),
-                "findCreatorsSearchReady": bool(search_inputs),
+                **obstruction_evidence,
+                "findCreatorsSearchReady": search_input is not None,
                 "duplicateFindCreatorsTabsClosed": (
                     reused_find_creators.get(
                         "duplicateFindCreatorsTabsClosed",
@@ -897,8 +1097,140 @@ class CreatorContactWorkflow:
             raise ZiniaoWorkflowError("达人用户名不能为空。")
         return f"@{bare_handle}", bare_handle
 
+    def _close_find_creators_obstruction(self) -> dict[str, Any]:
+        def local_match() -> tuple[WebElement | None, str]:
+            for by, selector in FIND_CREATORS_OBSTRUCTION_CLOSE_SELECTORS:
+                for candidate in self.driver.find_elements(by, selector):
+                    try:
+                        if candidate.is_displayed() and candidate.is_enabled():
+                            return candidate, selector
+                    except StaleElementReferenceException:
+                        continue
+            return None, ""
+
+        element, selected_selector = local_match()
+        locator_source = "local"
+        if (
+            element is None
+            and self._visible_find_creators_search_inputs()
+        ):
+            return {
+                "findCreatorsObstructionPresent": False,
+                "findCreatorsObstructionClosed": True,
+                "findCreatorsObstructionAlreadyClosed": True,
+                "findCreatorsObstructionSelector": "",
+                "findCreatorsObstructionLocatorSource": (
+                    "search_input_already_visible"
+                ),
+            }
+        if element is None and self.dom_fallback is not None:
+            recovered = self.dom_fallback.locate(
+                self.driver,
+                purpose=(
+                    "关闭查找达人页面已开启的 AI 搜索开关，"
+                    "恢复普通达人用户名搜索框"
+                ),
+                attempted_selectors=(
+                    FIND_CREATORS_OBSTRUCTION_CLOSE_SELECTORS
+                ),
+            )
+            late_local_match, late_selector = local_match()
+            if late_local_match is not None:
+                element = late_local_match
+                selected_selector = late_selector
+                locator_source = "local_after_dom_fallback"
+            elif recovered is not None:
+                element = recovered
+                selected_selector = "DOM_FALLBACK"
+                locator_source = "dom_fallback"
+
+        if element is not None and locator_source == "dom_fallback":
+            try:
+                if not (element.is_displayed() and element.is_enabled()):
+                    element = None
+            except StaleElementReferenceException:
+                element = None
+
+        if element is not None:
+            try:
+                role = str(element.get_attribute("role") or "").lower()
+                aria_checked = str(
+                    element.get_attribute("aria-checked") or ""
+                ).lower()
+                is_switch = role == "switch" or aria_checked in {
+                    "true",
+                    "false",
+                }
+                if is_switch and aria_checked == "false":
+                    return {
+                        "findCreatorsObstructionPresent": True,
+                        "findCreatorsObstructionClosed": True,
+                        "findCreatorsObstructionAlreadyClosed": True,
+                        "findCreatorsObstructionSelector": selected_selector,
+                        "findCreatorsObstructionLocatorSource": locator_source,
+                    }
+                self._click(element)
+
+                def obstruction_closed(_driver: WebDriver) -> bool:
+                    try:
+                        if is_switch:
+                            checked = str(
+                                element.get_attribute("aria-checked") or ""
+                            ).lower()
+                            if checked == "false" or not element.is_displayed():
+                                return True
+                            current_switch, _selector = local_match()
+                            if current_switch is not None:
+                                current_checked = str(
+                                    current_switch.get_attribute(
+                                        "aria-checked"
+                                    )
+                                    or ""
+                                ).lower()
+                                if current_checked == "false":
+                                    return True
+                            return bool(
+                                current_switch is None
+                                and self._visible_find_creators_search_inputs()
+                            )
+                        return not element.is_displayed()
+                    except StaleElementReferenceException:
+                        return True
+
+                self._wait(
+                    obstruction_closed,
+                    message=(
+                        "查找达人页面 AI 搜索开关点击后仍未关闭。"
+                        if is_switch
+                        else "查找达人页面遮挡关闭按钮点击后仍未消失。"
+                    ),
+                    timeout_seconds=min(12, self.timeout_seconds),
+                )
+                return {
+                    "findCreatorsObstructionPresent": True,
+                    "findCreatorsObstructionClosed": True,
+                    "findCreatorsObstructionAlreadyClosed": False,
+                    "findCreatorsObstructionSelector": selected_selector,
+                    "findCreatorsObstructionLocatorSource": locator_source,
+                }
+            except StaleElementReferenceException:
+                return {
+                    "findCreatorsObstructionPresent": True,
+                    "findCreatorsObstructionClosed": True,
+                    "findCreatorsObstructionAlreadyClosed": False,
+                    "findCreatorsObstructionSelector": selected_selector,
+                    "findCreatorsObstructionLocatorSource": locator_source,
+                }
+        return {
+            "findCreatorsObstructionPresent": False,
+            "findCreatorsObstructionClosed": False,
+            "findCreatorsObstructionAlreadyClosed": False,
+            "findCreatorsObstructionSelector": "",
+            "findCreatorsObstructionLocatorSource": "none",
+        }
+
     def search_creator(self, creator: str) -> WorkflowStepResult:
-        """Step 2: select the dropdown suggestion and verify its result card."""
+        """Step 2: close the obstruction, search the imported ID, and verify."""
         requested_handle, bare_handle = self.normalize_creator_handle(creator)
         current_url = self.driver.current_url
         if (
@@ -909,31 +1241,20 @@ class CreatorContactWorkflow:
                 "第 2 步前置验收失败：当前页面不是“查找达人”列表页。"
             )
 
+        obstruction_evidence = self._close_find_creators_obstruction()
         search_input = self._first_clickable(
-            (
-                (By.CSS_SELECTOR, "input.core-input[type='text']"),
-                (By.CSS_SELECTOR, "input[placeholder*='搜索姓名']"),
-                (By.CSS_SELECTOR, "input[placeholder*='Search']"),
-                (
-                    By.XPATH,
-                    "//input[@type='text' and "
-                    "(contains(@placeholder, '姓名') "
-                    "or contains(@placeholder, '达人') "
-                    "or contains(@placeholder, 'Search') "
-                    "or contains(@placeholder, 'search'))]",
-                ),
-            ),
+            FIND_CREATORS_SEARCH_SELECTORS,
             missing_message="第 2 步失败：未找到达人搜索框。",
         )
         self._click(search_input)
         search_input.send_keys(Keys.COMMAND, "a")
         search_input.send_keys(Keys.BACKSPACE)
-        search_input.send_keys(requested_handle)
+        search_input.send_keys(bare_handle)
 
         self._wait(
             lambda _driver: search_input.get_attribute("value")
-            == requested_handle,
-            message="第 2 步失败：达人用户名未完整写入搜索框。",
+            == bare_handle,
+            message="第 2 步失败：导入达人 ID 未完整写入搜索框。",
         )
 
         exact_handle = self._xpath_literal(bare_handle)
@@ -973,8 +1294,7 @@ class CreatorContactWorkflow:
                 }
                 return (
                     bare_handle.casefold() in tokens
-                    and search_input.get_attribute("value")
-                    == requested_handle
+                    and search_input.get_attribute("value") == bare_handle
                 )
             except StaleElementReferenceException:
                 return False
@@ -1027,11 +1347,13 @@ class CreatorContactWorkflow:
             evidence={
                 "currentUrl": self.driver.current_url,
                 "inputValue": final_input_value,
+                "importedCreatorId": bare_handle,
                 "matchedHandle": bare_handle,
                 "dropdownSelected": True,
                 "selectedSuggestion": suggestion_text,
                 "resultCardVisible": result_row.is_displayed(),
                 "resultCardTag": result_row.tag_name,
+                **obstruction_evidence,
             },
         )
 
@@ -2830,7 +3152,7 @@ class CreatorContactWorkflow:
                 },
             )
 
-        self._click(invite_button)
+        self._click(invite_button, fixed_wait_seconds=3.0)
         invitation_group_id = expected_group_id
         self._created_invitation = {
             "name": normalized_name,

@@ -321,14 +321,15 @@ MCP 会强制调用顺序、固定同一目标达人，并缓存已成功步骤�
 - `GreetingTemplate`：保存、复用和设置默认招呼语，内容上限 2000 字符并记录 SHA-256；
 - `DirectedCollaborationOption`：按店铺缓存“进行中”定向合作，主键语义为
   `invitationGroupId`；
-- `CreatorContactTask`：冻结商品、Top N、招呼语、定向合作和三个写操作确认；
-- `CreatorContactTarget`：冻结每位达人的排名、`@handle`、7/30 天销售额及执行证据；
+- `CreatorContactTask`：冻结导入批次、选择规则、人数、招呼语、定向合作和三个写操作确认；
+- `CreatorContactTarget`：冻结每位达人的排名、`@handle`、7/30 天及总销售额和执行证据；
 - `CreatorContactTaskStep`：持久化每个 MCP 工具步骤的安全输入输出摘要；
 - `ContactedCreator`：店铺级定向邀请去重表；
 - `CollaborationSyncJob`：定向合作只读同步队列。
 
-候选达人从已成功的“获取达人数据”商品中选择，先按近 30 天销售额降序，再按近 7 天
-销售额降序和 handle 稳定排序。handle 会移除 `@` 并大小写归一；同店铺
+候选达人从已确认的达人导入批次中选择，支持按达人 ID 自动选择表格候选人（最多
+50 位）、近 7 天/近 30 天/总销售额倒序排名，以及手动勾选。销售额相同或手动展示时按导入行号和达人 ID
+稳定排序。handle 会移除 `@` 并大小写归一；同店铺
 `ContactedCreator` 中已经完成定向邀请按钮点击/幂等确认的达人会在截取 Top N
 **之前**排除。任务创建时立即冻结最终目标，Worker 串行处理；另一任务已邀请的目标
 会在执行前再次跳过，不区分商品或合作项目。
@@ -511,7 +512,7 @@ Django 的联系和同步 Worker 必须非交互运行：缺少必要环境变�
 - 未经用户明确授权，不输入或发送私信；
 - 未经用户明确授权，不邀请达人；
 - 不得向 `@delaneykreusel` 重复发送本次招呼语或同一邀请；
-- 批量范围只能是用户明确选择并确认的商品 Top N，不得扩展到其他商品或达人；
+- 批量范围只能是用户明确选择并确认的导入批次 Top N，不得扩展到其他批次或达人；
 - 每个目标仍须独立通过强终态验收，失败或不明确时不得盲目重试；
 - 不修改非目标店铺数据。
 
@@ -523,11 +524,8 @@ Django 的联系和同步 Worker 必须非交互运行：缺少必要环境变�
 完整命令：
 
 ```bash
-npm run build
-npm run check:data-acquisition
-npm test
 .venv/bin/python web-ui/manage.py check
-.venv/bin/python web-ui/manage.py test tasks creator_contact
+.venv/bin/python web-ui/manage.py test tasks creator_contact mailing
 .venv/bin/python web-ui/manage.py makemigrations --check --dry-run
 PYTHONPATH=ziniao-automation/src \
   .venv/bin/python -m unittest discover -s ziniao-automation/tests -v

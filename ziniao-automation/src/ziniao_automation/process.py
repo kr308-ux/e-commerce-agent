@@ -119,11 +119,30 @@ class ZiniaoProcessManager:
             )
         else:
             raise ZiniaoConnectionError(f"不支持的操作系统：{self.system}")
-        deadline = time.monotonic() + 15
+        deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if not self.endpoint_ready() and not self._main_process_running():
                 return
             time.sleep(0.5)
+        if self.system == "Darwin" and self._main_process_running():
+            subprocess.run(
+                ["killall", "-KILL", "ziniao"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        elif self.system == "Linux" and self._main_process_running():
+            subprocess.run(
+                ["killall", "-KILL", "ziniaobrowser"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        force_deadline = time.monotonic() + 5
+        while time.monotonic() < force_deadline:
+            if not self.endpoint_ready() and not self._main_process_running():
+                return
+            time.sleep(0.25)
         raise ZiniaoConnectionError("紫鸟主进程未能在 15 秒内退出。")
 
     def start(self) -> None:
@@ -165,7 +184,18 @@ class ZiniaoProcessManager:
             time.sleep(0.5)
         raise ZiniaoConnectionError("紫鸟 WebDriver 端口未能在 30 秒内就绪。")
 
-    def ensure_started(self, *, restart: bool = False) -> None:
+    def ensure_started(
+        self,
+        *,
+        restart: bool = False,
+        restart_incompatible: bool = False,
+    ) -> None:
         if restart:
+            self.stop()
+        elif (
+            restart_incompatible
+            and self._main_process_running()
+            and not self.webdriver_mode_running()
+        ):
             self.stop()
         self.start()

@@ -1,0 +1,329 @@
+{% extends "tasks/base.html" %}
+{% load static %}
+
+{% block title %}邮件发送 · E-commerce Agent{% endblock %}
+{% block nav_mailing %}is-active{% endblock %}
+{% block topbar_title %}邮件发送{% endblock %}
+{% block topbar_subtitle %}<small class="topbar-context">串行投递队列</small>{% endblock %}
+{% block topbar_primary %}
+<a class="topbar-primary" href="#email-queue-create">
+    <span aria-hidden="true">＋</span>
+    添加邮件
+</a>
+{% endblock %}
+
+{% block content %}
+<section class="workbench-hero compact-hero">
+    <div>
+        <p class="eyebrow">EMAIL DELIVERY</p>
+        <h1>邮件发送</h1>
+        <p class="welcome-copy">从已确认的达人导入批次创建防重队列，由邮件服务逐封串行发送。</p>
+    </div>
+    <div class="service-status {% if email_service.status == 'RUNNING' %}is-ready{% elif email_service.status == 'STOPPING' %}is-warning{% endif %}">
+        <span></span>
+        <div>
+            <small>邮件服务</small>
+            <strong>{{ email_service.get_status_display }}</strong>
+        </div>
+    </div>
+</section>
+
+<section class="mail-metric-grid" aria-label="邮件投递概览">
+    <article class="mail-metric-card">
+        <span>今日发送成功</span>
+        <strong>{{ sent_today_count }}</strong>
+        <small>当天成功触达</small>
+    </article>
+    <article class="mail-metric-card mail-metric-highlight">
+        <span>队列等待</span>
+        <strong>{{ pending_count }}</strong>
+        <small>按创建时间依次处理</small>
+    </article>
+    <article class="mail-metric-card">
+        <span>正在发送</span>
+        <strong>{{ sending_count }}</strong>
+        <small>单封邮件处理中</small>
+    </article>
+    <article class="mail-metric-card">
+        <span>累计发送</span>
+        <strong>{{ sent_count }}</strong>
+        <small>不包含失败与跳过</small>
+    </article>
+</section>
+
+{% if template_saved %}
+<div class="queue-result" role="status">
+    <span class="queue-result-icon">✓</span>
+    <div>
+        <strong>邮件模板已保存</strong>
+        <p>版本 v{{ active_template_version.version }} 已启用；已在队列中的邮件仍使用原版本。</p>
+    </div>
+</div>
+{% endif %}
+
+<section
+    class="panel mail-template-panel"
+    id="email-template-editor"
+    data-email-template-editor
+    data-image-max-bytes="{{ template_image_max_bytes }}"
+    data-total-image-max-bytes="{{ template_total_image_max_bytes }}"
+>
+    <div class="panel-heading">
+        <div>
+            <span class="section-kicker">EMAIL CONTENT</span>
+            <h2>邮件内容设置</h2>
+        </div>
+        <span class="queue-limit">当前版本 v{{ active_template_version.version }}</span>
+    </div>
+    <form method="post" enctype="multipart/form-data" data-email-template-form>
+        {% csrf_token %}
+        <input type="hidden" name="action" value="save_template">
+        {{ template_form.content_html }}
+        {% if template_form.non_field_errors %}
+        <div class="mail-template-errors" role="alert">
+            {{ template_form.non_field_errors|join:"；" }}
+        </div>
+        {% endif %}
+        <div class="mail-template-workspace">
+            <div class="mail-template-editor-column">
+                <div class="mail-field mail-template-subject">
+                    <label for="{{ template_form.subject_template.id_for_label }}">
+                        {{ template_form.subject_template.label }}
+                        <small>可插入达人姓名变量</small>
+                    </label>
+                    <div class="mail-subject-row">
+                        {{ template_form.subject_template }}
+                        <button type="button" class="mail-tool-button" data-insert-creator-name>插入姓名变量</button>
+                    </div>
+                    {% if template_form.subject_template.errors %}
+                    <p class="form-error">{{ template_form.subject_template.errors|join:"；" }}</p>
+                    {% endif %}
+                </div>
+
+                <div class="mail-rich-toolbar" role="toolbar" aria-label="正文格式工具">
+                    <select data-rich-format aria-label="段落格式">
+                        <option value="p">正文</option>
+                        <option value="h2">大标题</option>
+                        <option value="h3">小标题</option>
+                    </select>
+                    <span class="mail-toolbar-divider"></span>
+                    <button type="button" data-rich-command="bold" title="加粗"><strong>B</strong></button>
+                    <button type="button" data-rich-command="italic" title="斜体"><em>I</em></button>
+                    <button type="button" data-rich-command="underline" title="下划线"><u>U</u></button>
+                    <span class="mail-toolbar-divider"></span>
+                    <button type="button" data-rich-command="insertUnorderedList" title="项目符号列表">• 列表</button>
+                    <button type="button" data-rich-command="insertOrderedList" title="编号列表">1. 列表</button>
+                    <span class="mail-toolbar-divider"></span>
+                    <button type="button" data-rich-link>🔗 链接</button>
+                    <button type="button" data-rich-image>▧ 图片</button>
+                </div>
+                <div
+                    class="mail-rich-editor"
+                    data-rich-editor
+                    contenteditable="true"
+                    role="textbox"
+                    aria-multiline="true"
+                    aria-label="邮件正文"
+                    data-placeholder="在这里输入完整邮件正文…"
+                ></div>
+                {% if template_form.content_html.errors %}
+                <p class="form-error">{{ template_form.content_html.errors|join:"；" }}</p>
+                {% endif %}
+                <div class="mail-editor-footer">
+                    <p class="mail-editor-help">
+                        可直接连续输入并选中文字设置格式；图片会插入当前光标位置。支持 PNG/JPG，最多 10 张，单张不超过 {{ template_image_max_mb }} MB、总计不超过 {{ template_total_image_max_mb }} MB。
+                    </p>
+                    <button type="button" class="mail-default-link" data-restore-default>恢复默认内容</button>
+                </div>
+                <div data-template-file-inputs hidden></div>
+                <div class="mail-template-actions">
+                    <span>保存会生成新版本，不会修改已排队邮件。</span>
+                    <button class="create-button" type="submit">保存并使用 <span>→</span></button>
+                </div>
+            </div>
+
+            <aside class="mail-preview-column">
+                <div class="mail-preview-heading">
+                    <div>
+                        <span>正文实时预览</span>
+                        <small data-preview-subject></small>
+                    </div>
+                    <div class="mail-preview-switch" role="group" aria-label="预览宽度">
+                        <button type="button" class="is-active" data-preview-width="desktop">桌面</button>
+                        <button type="button" data-preview-width="mobile">手机</button>
+                    </div>
+                </div>
+                <div class="mail-preview-frame-wrap" data-preview-wrap>
+                    <iframe
+                        class="mail-preview-frame"
+                        data-email-preview
+                        title="邮件正文预览"
+                        sandbox="allow-same-origin"
+                    ></iframe>
+                </div>
+                <p class="mail-preview-note">预览姓名使用 Creator One；实际发送时会替换为对应达人名称。</p>
+            </aside>
+        </div>
+    </form>
+</section>
+
+{% if queue_result %}
+<div class="queue-result" role="status">
+    <span class="queue-result-icon">✓</span>
+    <div>
+        <strong>邮件队列已更新</strong>
+        <p>
+            新增 {{ queue_result.queued }} 封，重新入队 {{ queue_result.requeued }} 封，
+            已在队列 {{ queue_result.already_pending }} 封，已发送防重 {{ queue_result.already_sent }} 封。
+            {% if queue_result.invalid_email %}无效邮箱 {{ queue_result.invalid_email }} 个。{% endif %}
+        </p>
+    </div>
+</div>
+{% endif %}
+
+<div class="mailing-layout">
+    <section class="panel mail-create-panel" id="email-queue-create">
+        <div class="panel-heading">
+            <div>
+                <span class="section-kicker">ADD TO QUEUE</span>
+                <h2>创建邮件队列</h2>
+            </div>
+            <span class="queue-limit">每日上限 {{ daily_limit }}</span>
+        </div>
+        <form class="mail-queue-form" method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="queue">
+            <div class="mail-field mail-field-limit">
+                <label for="{{ form.import_task.id_for_label }}">
+                    {{ form.import_task.label }}
+                    <small>仅显示包含有效邮箱数据的导入批次</small>
+                </label>
+                {{ form.import_task }}
+                {% if form.import_task.errors %}
+                <p class="form-error">{{ form.import_task.errors|join:"；" }}</p>
+                {% endif %}
+            </div>
+            <div class="mail-field mail-field-limit">
+                <label for="{{ form.limit.id_for_label }}">
+                    {{ form.limit.label }}
+                    <small>按达人销售额从高到低选择</small>
+                </label>
+                {{ form.limit }}
+                {% if form.limit.errors %}
+                <p class="form-error">{{ form.limit.errors|join:"；" }}</p>
+                {% endif %}
+            </div>
+            <label class="mail-check" for="{{ form.retry_failed.id_for_label }}">
+                {{ form.retry_failed }}
+                <span>
+                    <strong>{{ form.retry_failed.label }}</strong>
+                    <small>仅在确认失败邮件没有实际送达后使用</small>
+                </span>
+            </label>
+            <div class="mail-form-footer">
+                <p>页面只创建队列，邮件服务负责串行投递。</p>
+                <button class="create-button" type="submit">加入发送队列 <span>→</span></button>
+            </div>
+        </form>
+    </section>
+
+    <aside class="panel mail-runtime-panel">
+        <div class="panel-heading">
+            <div>
+                <span class="section-kicker">SERIAL DELIVERY</span>
+                <h2>发送规则</h2>
+            </div>
+        </div>
+        <ol class="mail-rules">
+            <li><span>1</span><div><strong>全局防重</strong><small>同一达人发送成功后不再入队</small></div></li>
+            <li><span>2</span><div><strong>逐封发送</strong><small>每次只处理一封，避免触发频率限制</small></div></li>
+            <li><span>3</span><div><strong>失败人工确认</strong><small>失败邮件不会自动重试</small></div></li>
+        </ol>
+        {% if email_service.status == "RUNNING" or email_service.status == "STOPPING" %}
+        <form method="post" action="{% url 'mailing:stop_service' %}">
+            {% csrf_token %}
+            <button
+                class="secondary-button"
+                type="submit"
+                {% if email_service.status == "STOPPING" %}disabled{% endif %}
+            >
+                {% if email_service.status == "STOPPING" %}正在停止…{% else %}停止邮件发送服务{% endif %}
+            </button>
+        </form>
+        <p class="mail-warning">当前邮件会先完成并记录结果，后续邮件保持待发送。</p>
+        {% elif not email_configured %}
+        <p class="mail-warning">SMTP 尚未配置，邮件服务无法启动。</p>
+        {% endif %}
+        {% if failed_count %}
+        <p class="mail-warning">{{ failed_count }} 封失败邮件等待人工核对。</p>
+        {% endif %}
+    </aside>
+</div>
+
+<section class="panel mail-delivery-panel">
+    <div class="panel-heading">
+        <div>
+            <span class="section-kicker">DELIVERY RECORDS</span>
+            <h2>最近投递记录</h2>
+        </div>
+        <span class="steps-count">{{ deliveries|length }}</span>
+    </div>
+    <div class="table-wrap">
+        <table class="mail-table">
+            <thead>
+                <tr>
+                    <th>达人</th>
+                    <th>收件邮箱</th>
+                    <th>状态</th>
+                    <th>尝试</th>
+                    <th>最近处理</th>
+                    <th>结果</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for delivery in deliveries %}
+                <tr id="delivery-{{ delivery.id }}">
+                    <td>
+                        <strong>{{ delivery.creator_name_snapshot }}</strong>
+                        <small>@{{ delivery.creator_id_snapshot|default:"—" }}</small>
+                    </td>
+                    <td>{{ delivery.recipient_email }}</td>
+                    <td>
+                        <span class="status-pill status-{{ delivery.status|lower }}">
+                            <i></i>{{ delivery.get_status_display }}
+                        </span>
+                    </td>
+                    <td>{{ delivery.attempt_count }} / {{ max_attempts }}</td>
+                    <td>{{ delivery.updated_at|date:"m-d H:i:s" }}</td>
+                    <td>
+                        {% if delivery.status == "SENT" %}
+                        <span class="delivery-success">已触达</span>
+                        {% elif delivery.error_message %}
+                        <span class="delivery-error" title="{{ delivery.error_message }}">{{ delivery.error_message|truncatechars:34 }}</span>
+                        {% else %}
+                        <span class="delivery-muted">—</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" class="empty-cell">还没有邮件投递记录，请先添加邮件到队列。</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<footer class="page-footer">
+    <span><i></i> Email Delivery · Serial Queue</span>
+    <span>敏感 SMTP 配置不会显示在页面中</span>
+</footer>
+{% endblock %}
+
+{% block extra_js %}
+{{ editor_html|json_script:"email-template-html" }}
+{{ default_template_html|json_script:"email-template-default-html" }}
+{{ default_template_subject|json_script:"email-template-default-subject" }}
+<script src="{% static 'mailing/editor.js' %}?v=20260730-rich-editor1" defer></script>
+{% endblock %}

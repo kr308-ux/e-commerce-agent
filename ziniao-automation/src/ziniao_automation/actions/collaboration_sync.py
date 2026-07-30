@@ -409,7 +409,7 @@ class TargetCollaborationSync:
 
     def _click_read_only(self, element: WebElement) -> None:
         """Click a navigation/tab/pagination control, never a write control."""
-        time.sleep(round(random.uniform(3.0, 5.0), 3))
+        time.sleep(round(random.uniform(1.0, 2.0), 3))
         self.driver.execute_script(
             "arguments[0].scrollIntoView({block: 'center'});",
             element,

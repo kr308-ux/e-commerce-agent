@@ -88,57 +88,114 @@
     loadSelectedTemplate({ onlyWhenEmpty: true });
   };
 
-  const setupProductFiltering = () => {
-    if (!taskForm) return null;
-    const taskSelect = taskForm.querySelector("[data-source-task-select]");
-    const productSelect = taskForm.querySelector("[data-product-select]");
-    if (!taskSelect || !productSelect) return null;
+  const setupCollaborationSearch = () => {
+    if (!taskForm) return;
+    const searchInput = taskForm.querySelector(
+      "[data-collaboration-search]"
+    );
+    const select = taskForm.querySelector(
+      '[name="collaboration_option"]'
+    );
+    const state = taskForm.querySelector(
+      "[data-collaboration-search-state]"
+    );
+    if (!searchInput || !select) return;
 
-    const placeholder = productSelect.options[0]?.cloneNode(true);
-    const productCatalog = Array.from(productSelect.options)
-      .slice(1)
-      .map((option) => option.cloneNode(true));
-    const initiallySelectedProduct = productCatalog.find((option) => option.selected);
-    if (initiallySelectedProduct?.dataset.sourceTask) {
-      taskSelect.value = initiallySelectedProduct.dataset.sourceTask;
-    }
-
-    const filterProducts = ({ chooseFirst = true } = {}) => {
-      const taskId = taskSelect.value;
-      const previousValue = productSelect.value;
-      const matching = productCatalog.filter(
-        (option) => !taskId || option.dataset.sourceTask === taskId
-      );
-      const fragment = document.createDocumentFragment();
-      if (placeholder) fragment.append(placeholder.cloneNode(true));
-      matching.forEach((option, index) => {
-        const clone = option.cloneNode(true);
-        const label = clone.dataset.productLabel || clone.textContent.trim();
-        clone.textContent = `第 ${index + 1} 个 · ${label}`;
-        fragment.append(clone);
-      });
-      productSelect.replaceChildren(fragment);
-
-      const previousStillAvailable = Array.from(productSelect.options).some(
-        (option) => option.value === previousValue
-      );
-      if (previousStillAvailable) {
-        productSelect.value = previousValue;
-      } else if (chooseFirst && matching.length > 0) {
-        productSelect.value = matching[0].value;
+    const choices = Array.from(select.options).filter(
+      (option) => option.value
+    );
+    const normalize = (value) =>
+      String(value ?? "")
+        .normalize("NFKC")
+        .toLocaleLowerCase()
+        .replace(/[\s\-_/+·.，,：:（）()[\]]+/g, "");
+    const fuzzyMatch = (candidate, query) => {
+      if (!query || candidate.includes(query)) return true;
+      let queryIndex = 0;
+      for (const character of candidate) {
+        if (character === query[queryIndex]) queryIndex += 1;
+        if (queryIndex === query.length) return true;
       }
-      productSelect.disabled = matching.length === 0;
-      return previousValue !== productSelect.value;
+      return false;
     };
 
-    const initialSelectionChanged = filterProducts();
-    return { taskSelect, productSelect, filterProducts, initialSelectionChanged };
+    const filterChoices = () => {
+      const query = normalize(searchInput.value);
+      let visibleCount = 0;
+      choices.forEach((option) => {
+        const matches = fuzzyMatch(normalize(option.textContent), query);
+        option.hidden = !matches && !option.selected;
+        if (matches) visibleCount += 1;
+      });
+      if (state) {
+        state.textContent = query
+          ? `匹配到 ${visibleCount} 个选项`
+          : `${choices.length} 个可用选项`;
+      }
+    };
+
+    searchInput.addEventListener("input", filterChoices);
+    searchInput.addEventListener("search", filterChoices);
   };
 
-  const setupCandidatePreview = (productFiltering) => {
-    if (!taskForm || !productFiltering) return;
-    const { taskSelect, productSelect, filterProducts } = productFiltering;
+  const setupImportBatchSelection = () => {
+    if (!taskForm) return null;
+    const importTaskSelect = taskForm.querySelector("[data-import-task-select]");
+    const methodInputs = Array.from(
+      taskForm.querySelectorAll('[name="selection_method"]')
+    );
+    const panels = Array.from(
+      taskForm.querySelectorAll("[data-selection-panel]")
+    );
+    const manualColumns = Array.from(
+      taskForm.querySelectorAll("[data-manual-only]")
+    );
     const topNInput = taskForm.querySelector('[name="top_n"]');
+    const ruleCopy = taskForm.querySelector("[data-candidate-rule-copy]");
+    if (!importTaskSelect) return null;
+
+    const activeMethod = () =>
+      methodInputs.find((input) => input.checked)?.value || "SALES";
+
+    const updateMethodUI = () => {
+      const method = activeMethod();
+      panels.forEach((panel) => {
+        panel.hidden = panel.dataset.selectionPanel !== method;
+      });
+      manualColumns.forEach((column) => {
+        column.hidden = method !== "MANUAL";
+      });
+      if (topNInput) topNInput.required = method === "SALES";
+      if (ruleCopy) {
+        ruleCopy.textContent =
+          method === "CREATOR_ID"
+            ? "按导入顺序自动全选候选人，最多 50 位"
+            : method === "MANUAL"
+              ? "按导入顺序展示，请勾选最终联系人"
+              : "按所选销售额周期倒序，销售额相同则按导入顺序排列";
+      }
+    };
+
+    updateMethodUI();
+    return {
+      importTaskSelect,
+      methodInputs,
+      activeMethod,
+      updateMethodUI,
+      topNInput,
+    };
+  };
+
+  const setupCandidatePreview = (batchSelection) => {
+    if (!taskForm || !batchSelection) return;
+    const {
+      importTaskSelect,
+      methodInputs,
+      activeMethod,
+      updateMethodUI,
+      topNInput,
+    } = batchSelection;
+    const salesWindowSelect = taskForm.querySelector("[data-sales-window]");
     const storeInput = taskForm.querySelector('[name="store_id"]');
     const preview = taskForm.querySelector("[data-candidate-preview]");
     const body = taskForm.querySelector("[data-candidate-body]");
@@ -150,6 +207,13 @@
 
     let requestController = null;
     let debounceTimer = null;
+    const selectedIds = new Set(
+      Array.from(
+        taskForm.querySelectorAll(
+          '[name="selected_creator_ids"]:checked'
+        )
+      ).map((input) => input.value)
+    );
 
     const setState = (message, loading = false) => {
       if (fetchState) fetchState.textContent = message;
@@ -160,16 +224,42 @@
     const emptyRow = (message) => {
       const row = document.createElement("tr");
       const cell = textNode("td", message, "empty-cell");
-      cell.colSpan = 6;
+      cell.colSpan = 7;
       row.append(cell);
       body.replaceChildren(row);
-      if (summary) summary.textContent = "0 位待联系";
+      if (summary) summary.textContent = "0 位已选择";
+    };
+
+    const updateManualSummary = () => {
+      if (activeMethod() !== "MANUAL") return;
+      if (summary) summary.textContent = `${selectedIds.size} 位已选择`;
     };
 
     const renderCandidates = (candidates) => {
+      const method = activeMethod();
       const fragment = document.createDocumentFragment();
       candidates.forEach((candidate, index) => {
         const row = document.createElement("tr");
+
+        const selectCell = document.createElement("td");
+        selectCell.dataset.manualOnly = "";
+        selectCell.hidden = method !== "MANUAL";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.name = "selected_creator_ids";
+        checkbox.value = String(valueFrom(candidate, "id") ?? "");
+        checkbox.className = "candidate-checkbox";
+        checkbox.checked = selectedIds.has(checkbox.value);
+        checkbox.setAttribute(
+          "aria-label",
+          `选择 ${String(valueFrom(candidate, "nickname", "creatorHandle") ?? "达人")}`
+        );
+        checkbox.addEventListener("change", () => {
+          if (checkbox.checked) selectedIds.add(checkbox.value);
+          else selectedIds.delete(checkbox.value);
+          updateManualSummary();
+        });
+        selectCell.append(checkbox);
 
         const rankCell = document.createElement("td");
         rankCell.append(
@@ -207,9 +297,12 @@
             currency(valueFrom(candidate, "recent_30_day_revenue", "recent30DayRevenue"))
           )
         );
-        const videoCell = textNode(
-          "td",
-          String(valueFrom(candidate, "related_video_count", "relatedVideoCount") ?? "—")
+        const totalRevenueCell = document.createElement("td");
+        totalRevenueCell.append(
+          textNode(
+            "strong",
+            currency(valueFrom(candidate, "total_revenue", "totalRevenue"))
+          )
         );
         const stateCell = document.createElement("td");
         const ready = textNode("span", "", "candidate-ready");
@@ -217,36 +310,44 @@
         stateCell.append(ready);
 
         row.append(
+          selectCell,
           rankCell,
           creatorCell,
           revenue7Cell,
           revenue30Cell,
-          videoCell,
+          totalRevenueCell,
           stateCell
         );
         fragment.append(row);
       });
 
       if (candidates.length === 0) {
-        emptyRow("没有符合条件的未联系达人，请调整商品或人数。");
+        emptyRow("没有符合条件的未联系达人，请调整导入批次或人数。");
       } else {
         body.replaceChildren(fragment);
-        if (summary) summary.textContent = `${candidates.length} 位待联系`;
+        if (summary) {
+          summary.textContent =
+            method === "MANUAL"
+              ? `${selectedIds.size} 位已选择`
+              : `${candidates.length} 位已选择`;
+        }
       }
     };
 
     const fetchCandidates = async () => {
-      const productId = productSelect.value;
-      if (!productId) {
-        emptyRow("请选择包含已导入达人数据的商品。");
-        setState("等待选择商品");
+      const importTaskId = importTaskSelect.value;
+      if (!importTaskId) {
+        emptyRow("请选择包含已导入达人数据的批次。");
+        setState("等待选择导入批次");
         return;
       }
-
+      const method = activeMethod();
       requestController?.abort();
       requestController = new AbortController();
       const query = new URLSearchParams({
-        product_id: productId,
+        import_task_id: importTaskId,
+        selection_method: method,
+        sales_window_days: salesWindowSelect?.value || "30",
         top_n: topNInput?.value || "1",
         store_id: storeInput?.value || "",
       });
@@ -258,17 +359,28 @@
           cache: "no-store",
           signal: requestController.signal,
         });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) {
+          const errorPayload = await response.json().catch(() => ({}));
+          throw new Error(errorPayload.error || `HTTP ${response.status}`);
+        }
         const payload = await response.json();
         const candidates =
           valueFrom(payload, "creators", "candidates", "results", "targets") ?? [];
         renderCandidates(Array.isArray(candidates) ? candidates : []);
         const excluded = valueFrom(payload, "excluded_count", "excludedCount") ?? 0;
         if (excludedCount) excludedCount.textContent = String(excluded);
-        setState("预览已更新");
+        const unmatched =
+          valueFrom(payload, "unmatchedIdentifiers", "unmatched_identifiers") ?? [];
+        setState(
+          Array.isArray(unmatched) && unmatched.length
+            ? `未在批次中找到：${unmatched.join("、")}`
+            : "预览已更新"
+        );
       } catch (error) {
         if (error.name === "AbortError") return;
-        setState("预览更新失败，提交时将由服务端再次校验");
+        setState(
+          error.message || "预览更新失败，提交时将由服务端再次校验"
+        );
       }
     };
 
@@ -277,64 +389,31 @@
       debounceTimer = window.setTimeout(fetchCandidates, 180);
     };
 
-    taskSelect.addEventListener("change", () => {
-      filterProducts();
+    importTaskSelect.addEventListener("change", () => {
+      selectedIds.clear();
       scheduleFetch();
     });
-    productSelect.addEventListener("change", scheduleFetch);
+    methodInputs.forEach((input) =>
+      input.addEventListener("change", () => {
+        updateMethodUI();
+        scheduleFetch();
+      })
+    );
     topNInput?.addEventListener("input", scheduleFetch);
     topNInput?.addEventListener("change", scheduleFetch);
+    salesWindowSelect?.addEventListener("change", scheduleFetch);
     storeInput?.addEventListener("change", scheduleFetch);
 
-    if (productFiltering.initialSelectionChanged) scheduleFetch();
+    if (importTaskSelect.value) scheduleFetch();
   };
 
-  const setupConfirmationGate = () => {
+  const setupTaskSubmission = () => {
     if (!taskForm) return;
-    const confirmations = Array.from(
-      taskForm.querySelectorAll(
-        '[name="confirm_send_greeting"], [name="confirm_send_invitation"], [name="confirm_send_card"]'
-      )
-    );
-    const confirmAll = taskForm.querySelector("[data-confirm-all]");
-    const createButton = taskForm.querySelector("[data-create-contact-task]");
     const defaultAction = taskForm.querySelector('input[type="hidden"][name="action"]');
-
-    const update = () => {
-      if (!createButton) return;
-      const allConfirmed =
-        confirmations.length > 0 &&
-        confirmations.every((confirmation) => confirmation.checked);
-      createButton.disabled = !allConfirmed;
-      createButton.setAttribute("aria-disabled", String(!allConfirmed));
-      if (confirmAll) {
-        confirmAll.checked = allConfirmed;
-        confirmAll.indeterminate =
-          !allConfirmed && confirmations.some((confirmation) => confirmation.checked);
-      }
-    };
-
-    confirmations.forEach((confirmation) =>
-      confirmation.addEventListener("change", update)
-    );
-    confirmAll?.addEventListener("change", () => {
-      confirmations.forEach((confirmation) => {
-        confirmation.checked = confirmAll.checked;
-      });
-      update();
-    });
-    update();
 
     taskForm.addEventListener("submit", (event) => {
       const submittedAction = event.submitter?.value || "create_task";
       if (defaultAction) defaultAction.value = submittedAction;
-      if (
-        submittedAction === "create_task" &&
-        confirmations.some((confirmation) => !confirmation.checked)
-      ) {
-        event.preventDefault();
-        confirmations.find((confirmation) => !confirmation.checked)?.focus();
-      }
     });
   };
 
@@ -374,9 +453,44 @@
     window.setInterval(refreshWhenChanged, 4000);
   };
 
+  const setupBrowserStatus = () => {
+    const status = document.querySelector("[data-browser-status]");
+    if (!status?.dataset.statusUrl) return;
+    const label = status.querySelector("[data-browser-status-label]");
+    const detail = status.querySelector("[data-browser-status-detail]");
+
+    const refresh = async () => {
+      try {
+        const response = await fetch(status.dataset.statusUrl, {
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        const payload = await response.json();
+        const ready = payload.ready === true;
+        status.classList.toggle("is-ready", ready);
+        status.classList.toggle("is-unavailable", !ready);
+        if (label) {
+          label.textContent = payload.statusLabel || "浏览器未就绪";
+        }
+        if (detail) {
+          detail.textContent = ready
+            ? `${payload.connectionModeLabel || "浏览器可复用"} · 端口 ${payload.debuggingPort}`
+            : payload.errorMessage || "店铺首页验收未通过";
+        }
+      } catch {
+        // Keep the most recent server-rendered state on a transient failure.
+      }
+    };
+
+    window.setInterval(refresh, 5000);
+  };
+
   setupGreetingEditor();
-  const productFiltering = setupProductFiltering();
-  setupCandidatePreview(productFiltering);
-  setupConfirmationGate();
+  setupCollaborationSearch();
+  const batchSelection = setupImportBatchSelection();
+  setupCandidatePreview(batchSelection);
+  setupTaskSubmission();
   setupTaskMonitor();
+  setupBrowserStatus();
 })();

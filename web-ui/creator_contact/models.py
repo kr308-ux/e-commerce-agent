@@ -9,7 +9,7 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models import Q
 
-from tasks.models import Product, RelatedCreator
+from tasks.models import Creator, ImportTask
 
 
 def normalize_creator_handle(value: object) -> str:
@@ -111,6 +111,11 @@ class DirectedCollaborationOption(models.Model):
 
 
 class CreatorContactTask(models.Model):
+    class SelectionMethod(models.TextChoices):
+        CREATOR_ID = "CREATOR_ID", "按达人 ID"
+        SALES = "SALES", "按销售额"
+        MANUAL = "MANUAL", "手动勾选"
+
     class Status(models.TextChoices):
         PENDING = "PENDING", "等待中"
         RUNNING = "RUNNING", "执行中"
@@ -122,10 +127,19 @@ class CreatorContactTask(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=160, default="联系达人")
     store_id = models.CharField(max_length=80, db_index=True)
-    source_product = models.ForeignKey(
-        Product,
+    source_import_task = models.ForeignKey(
+        ImportTask,
         related_name="creator_contact_tasks",
         on_delete=models.PROTECT,
+    )
+    selection_method = models.CharField(
+        max_length=24,
+        choices=SelectionMethod.choices,
+        default=SelectionMethod.SALES,
+    )
+    sales_window_days = models.PositiveSmallIntegerField(
+        choices=((0, "总销售额"), (7, "近 7 天"), (30, "近 30 天")),
+        default=30,
     )
     top_n = models.PositiveSmallIntegerField(
         validators=[MinValueValidator(1), MaxValueValidator(100)]
@@ -166,7 +180,7 @@ class CreatorContactTask(models.Model):
     error_message = models.TextField(blank=True)
     model_name = models.CharField(
         max_length=100,
-        default="deepseek/deepseek-v4-flash",
+        default="deepseek/deepseek-v4-pro",
     )
     opencode_session_id = models.CharField(max_length=120, blank=True)
     final_summary = models.JSONField(default=dict, blank=True)
@@ -205,8 +219,8 @@ class CreatorContactTarget(models.Model):
         related_name="targets",
         on_delete=models.CASCADE,
     )
-    related_creator = models.ForeignKey(
-        RelatedCreator,
+    creator = models.ForeignKey(
+        Creator,
         related_name="contact_targets",
         on_delete=models.SET_NULL,
         null=True,
@@ -223,6 +237,12 @@ class CreatorContactTarget(models.Model):
         blank=True,
     )
     recent_7_day_revenue_snapshot = models.DecimalField(
+        max_digits=22,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    total_revenue_snapshot = models.DecimalField(
         max_digits=22,
         decimal_places=2,
         null=True,
@@ -325,8 +345,8 @@ class ContactedCreator(models.Model):
     normalized_handle = models.CharField(max_length=160)
     creator_handle = models.CharField(max_length=160)
     chat_creator_id = models.CharField(max_length=40, blank=True)
-    related_creator = models.ForeignKey(
-        RelatedCreator,
+    creator = models.ForeignKey(
+        Creator,
         related_name="successful_contacts",
         on_delete=models.SET_NULL,
         null=True,

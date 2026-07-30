@@ -1,109 +1,120 @@
 {% extends "tasks/base.html" %}
 
-{% block title %}{{ task.name }} · E-commerce Agent{% endblock %}
-{% block nav_tasks %}is-active{% endblock %}
+{% block title %}{{ task.file_name }} · 达人导入{% endblock %}
+{% block nav_creator_data %}is-active{% endblock %}
+{% block topbar_title %}导入任务详情{% endblock %}
 
 {% block content %}
-<div data-task-monitor data-status="{{ task.status }}" data-status-url="{% url 'tasks:task-status' task.id %}">
-<nav class="breadcrumb" aria-label="面包屑"><a href="{% url 'tasks:dashboard' %}">工作台</a><span>›</span><b>#{{ task.id|stringformat:"s"|slice:":8" }}</b></nav>
+<div
+    data-task-monitor
+    data-status="{{ task.status }}"
+    data-status-url="{% url 'tasks:import-status' task.id %}"
+>
+<nav class="breadcrumb" aria-label="面包屑"><a href="{% url 'tasks:creator-data' %}">达人数据</a><span>›</span><b>#{{ task.id|stringformat:"s"|slice:":8" }}</b></nav>
 
 <section class="detail-hero">
     <div>
         <div class="detail-titleline"><span class="status-pill status-{{ task.status|lower }}"><i></i>{{ task.get_status_display }}</span><span class="detail-id">#{{ task.id }}</span></div>
-        <h1>{{ task.name }}</h1>
-        <p>目标 {{ task.product_limit }} 个商品 · {{ task.model_name }} · 创建于 {{ task.created_at|date:"Y-m-d H:i:s" }}</p>
+        <h1>{{ task.file_name }}</h1>
+        <p>Sheet：{{ task.sheet_name }} · 规则版本 v{{ task.confirmed_rule_version }} · 确认于 {{ task.confirmed_at|date:"Y-m-d H:i:s" }}</p>
     </div>
     <div class="detail-actions">
-        <a class="secondary-button" href="{% url 'tasks:dashboard' %}">返回工作台</a>
-        {% if task.status == 'WAITING_CONFIRMATION' or task.status == 'FAILED' %}
-        <form method="post" action="{% url 'tasks:task-retry' task.id %}">
-            {% csrf_token %}
-            <button type="submit" class="secondary-button">重新加入队列</button>
-        </form>
-        {% endif %}
+        <a class="secondary-button" href="{% url 'tasks:creator-data' %}">返回达人数据</a>
         <button type="button" class="create-button compact" data-refresh-page>刷新进度 ↻</button>
     </div>
 </section>
 
 {% if task.error_message %}
-<div class="alert-card {% if task.status == 'WAITING_CONFIRMATION' %}alert-warning{% else %}alert-error{% endif %}">
-    <strong>{{ task.error_code|default:"任务提示" }}</strong>
-    <span>{{ task.error_message }}</span>
-</div>
+<div class="alert-card alert-error"><strong>导入失败</strong><span>{{ task.error_message }}</span></div>
 {% endif %}
 
 <section class="detail-summary-grid">
     <article class="panel progress-card">
-        <div class="progress-ring" style="--progress: {{ task.progress }}"><div><strong>{{ task.progress }}%</strong><span>总进度</span></div></div>
+        <div class="progress-ring" style="--progress: {% if task.total_rows %}{% widthratio task.processed_rows task.total_rows 100 %}{% else %}0{% endif %}">
+            <div><strong>{% if task.total_rows %}{% widthratio task.processed_rows task.total_rows 100 %}{% else %}0{% endif %}%</strong><span>总进度</span></div>
+        </div>
         <div class="progress-copy">
-            <span class="section-kicker">CURRENT STEP</span><h2>{{ task.current_step|default:"等待 Agent Worker" }}</h2>
-            <p>已记录 {{ task.steps.count }} 个 MCP 步骤；页面会在任务执行期间自动刷新。</p>
-            <div class="wide-progress"><span style="width: {{ task.progress }}%"></span></div>
+            <span class="section-kicker">CURRENT STEP</span><h2>{{ task.current_step|default:"等待导入 Worker" }}</h2>
+            <p>源文件仅用于本次已确认任务，任务结束后自动清理。</p>
+            <div class="wide-progress"><span style="width: {% if task.total_rows %}{% widthratio task.processed_rows task.total_rows 100 %}{% else %}0{% endif %}%"></span></div>
         </div>
     </article>
     <article class="panel task-meta-card">
-        <span class="section-kicker">PERSISTED RESULT</span><h2>入库概览</h2>
+        <span class="section-kicker">IMPORT RESULT</span><h2>入库概览</h2>
         <dl class="task-meta-list">
-            <div><dt>商品</dt><dd>{{ product_count }} / {{ task.product_limit }}</dd></div>
-            <div><dt>关联达人</dt><dd>{{ creator_count }}</dd></div>
-            <div><dt>导出文件</dt><dd>{{ export_count }}</dd></div>
-            <div><dt>OpenCode Session</dt><dd class="mono-small">{{ task.opencode_session_id|default:"—" }}</dd></div>
+            <div><dt>成功行</dt><dd>{{ task.success_rows }}</dd></div>
+            <div><dt>部分成功</dt><dd>{{ task.partial_success_rows }}</dd></div>
+            <div><dt>失败行</dt><dd>{{ task.failed_rows }}</dd></div>
+            <div><dt>新增 / 更新达人</dt><dd>{{ task.new_creator_count }} / {{ task.updated_creator_count }}</dd></div>
+            <div><dt>销售额快照</dt><dd>{{ task.sales_metric_count }}</dd></div>
         </dl>
     </article>
 </section>
 
+<section class="panel result-panel">
+    <div class="panel-heading"><div><span class="section-kicker">CREATORS</span><h2>本批次达人</h2></div><span class="steps-count">{{ task.imported_creators.count }}（展示前 200）</span></div>
+    <div class="table-wrap">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>原始行</th><th>达人 ID</th><th>昵称</th><th>邮箱</th>
+                    {% for window in sales_windows %}<th>{% if window == 0 %}总销售额{% else %}{{ window }} 天销售额{% endif %}</th>{% endfor %}
+                    <th>结果</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in creator_rows %}
+                <tr>
+                    <td>{{ row.membership.first_row_number }}</td>
+                    <td><strong>{{ row.creator.creator_id }}</strong></td>
+                    <td>{{ row.creator.nickname|default:"—" }}</td>
+                    <td>{{ row.creator.email|default:"—" }}</td>
+                    {% for cell in row.sales_cells %}<td>{% if cell.amount != None %}{{ cell.amount }}{% else %}—{% endif %}</td>{% endfor %}
+                    <td>{{ row.membership.get_row_status_display }}</td>
+                </tr>
+            {% empty %}
+                <tr><td colspan="8" class="empty-cell">任务尚未写入达人数据。</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="panel result-panel">
+    <div class="panel-heading"><div><span class="section-kicker">ROW ISSUES</span><h2>行级错误与警告</h2></div><span class="steps-count">{{ task.row_errors.count }}</span></div>
+    <div class="table-wrap">
+        <table class="data-table">
+            <thead><tr><th>行号</th><th>达人 ID</th><th>字段</th><th>级别</th><th>原因</th></tr></thead>
+            <tbody>
+            {% for error in errors %}
+                <tr>
+                    <td>{{ error.row_number }}</td>
+                    <td>{{ error.creator_id|default:"—" }}</td>
+                    <td>{{ error.error_field|default:"—" }}</td>
+                    <td>{% if error.is_fatal %}失败{% else %}部分成功{% endif %}</td>
+                    <td>{{ error.error_message }}</td>
+                </tr>
+            {% empty %}
+                <tr><td colspan="5" class="empty-cell">没有行级错误。</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
 <section class="panel steps-panel">
-    <div class="panel-heading"><div><span class="section-kicker">MCP EXECUTION</span><h2>逐步验收记录</h2></div><span class="steps-count">{{ task.steps.count }}</span></div>
+    <div class="panel-heading"><div><span class="section-kicker">AUDIT LOG</span><h2>导入日志</h2></div><span class="steps-count">{{ task.logs.count }}</span></div>
     <ol class="step-list compact-steps">
-    {% for step in task.steps.all %}
-        <li class="{% if step.status == 'SUCCESS' %}step-complete{% elif step.status == 'FAILED' %}step-failed{% else %}step-active{% endif %}">
-            <span class="step-marker">{% if step.status == 'SUCCESS' %}✓{% elif step.status == 'FAILED' %}!{% else %}<i></i>{% endif %}</span>
-            <div><strong>{{ step.label }}</strong><p>{{ step.step_id }}{% if step.error_message %} · {{ step.error_message }}{% endif %}</p><small>{{ step.finished_at|date:"H:i:s" }}</small></div>
-            <span class="step-state">{{ step.get_status_display }}</span>
+    {% for log in task.logs.all %}
+        <li class="{% if log.status == 'FAILED' %}step-failed{% else %}step-complete{% endif %}">
+            <span class="step-marker">{% if log.status == 'FAILED' %}!{% else %}✓{% endif %}</span>
+            <div><strong>{{ log.message }}</strong><p>{{ log.step }}</p><small>{{ log.created_at|date:"Y-m-d H:i:s" }}</small></div>
+            <span class="step-state">{{ log.get_status_display }}</span>
         </li>
     {% empty %}
-        <li><span class="step-marker">1</span><div><strong>等待 Worker 领取任务</strong><p>运行 python web-ui/manage.py run_creator_worker</p></div><span class="step-state">等待</span></li>
+        <li><span class="step-marker">1</span><div><strong>等待导入 Worker 领取任务</strong><p>run_import_worker</p></div><span class="step-state">等待</span></li>
     {% endfor %}
     </ol>
-</section>
-
-<section class="panel result-panel">
-    <div class="panel-heading"><div><span class="section-kicker">PRODUCTS</span><h2>商品信息</h2></div><span class="steps-count">{{ product_count }}</span></div>
-    <div class="table-wrap">
-        <table class="data-table"><thead><tr><th>商品名称</th><th>总销量</th><th>近 7 天销售额</th><th>总销售额</th><th>关联达人数</th><th>已导入达人</th></tr></thead>
-        <tbody>
-        {% for product in products %}
-            <tr>
-                <td><a class="external-link" href="{{ product.product_url }}" target="_blank" rel="noreferrer">{{ product.name|truncatechars:72 }}</a><small class="block-muted">{{ product.external_product_id }}</small></td>
-                <td>{{ product.total_sales_raw|default:"—" }}</td>
-                <td>{{ product.recent_7_day_revenue_raw|default:"—" }}</td>
-                <td>{{ product.total_revenue_raw|default:"—" }}</td>
-                <td>{{ product.related_creator_count|default_if_none:"—" }}</td>
-                <td>{{ product.related_creators.count }}</td>
-            </tr>
-        {% empty %}<tr><td colspan="6" class="empty-cell">商品尚未入库。</td></tr>{% endfor %}
-        </tbody></table>
-    </div>
-</section>
-
-<section class="panel result-panel">
-    <div class="panel-heading"><div><span class="section-kicker">RELATED CREATORS</span><h2>关联达人信息</h2></div><span class="steps-count">{{ creator_count }}（展示前 200）</span></div>
-    <div class="table-wrap">
-        <table class="data-table"><thead><tr><th>商品</th><th>达人</th><th>近 7 天销售额</th><th>近 30 天销售额</th><th>粉丝数</th><th>关联视频</th><th>邮箱</th></tr></thead>
-        <tbody>
-        {% for creator in creators %}
-            <tr>
-                <td>{{ creator.product.name|truncatechars:28 }}</td>
-                <td>{% if creator.tiktok_url %}<a class="external-link" href="{{ creator.tiktok_url }}" target="_blank" rel="noreferrer">{{ creator.nickname|default:creator.creator_handle }}</a>{% else %}{{ creator.nickname|default:creator.creator_handle }}{% endif %}<small class="block-muted">@{{ creator.creator_handle }}</small></td>
-                <td>{% if creator.recent_7_day_revenue != None %}${{ creator.recent_7_day_revenue }}{% else %}—{% endif %}</td>
-                <td>{% if creator.recent_30_day_revenue != None %}${{ creator.recent_30_day_revenue }}{% else %}—{% endif %}</td>
-                <td>{{ creator.follower_count|default_if_none:"—" }}</td>
-                <td>{{ creator.related_video_count|default_if_none:"—" }}</td>
-                <td>{{ creator.email|default:"—" }}</td>
-            </tr>
-        {% empty %}<tr><td colspan="7" class="empty-cell">达人导出文件尚未导入。</td></tr>{% endfor %}
-        </tbody></table>
-    </div>
 </section>
 </div>
 {% endblock %}
