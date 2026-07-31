@@ -132,6 +132,54 @@ class ReusableBrowserConnectionTests(unittest.TestCase):
         connection.close()
         lease.release.assert_called_once()
 
+    def test_attach_only_cache_miss_never_starts_browser(self) -> None:
+        (
+            settings,
+            _store,
+            _started,
+            client,
+            lease,
+            lease_factory,
+            session,
+        ) = self._fixtures()
+        cache = Mock()
+        cache.resolve_live.return_value = None
+
+        with (
+            patch(
+                "ziniao_automation.browser_connection.ZiniaoProcessManager"
+            ),
+            patch(
+                "ziniao_automation.browser_connection.ZiniaoClient",
+                return_value=client,
+            ),
+            patch(
+                "ziniao_automation.browser_connection.BrowserSessionCache",
+                return_value=cache,
+            ),
+            patch(
+                "ziniao_automation.browser_connection.StoreBrowserLease",
+                return_value=lease_factory,
+            ),
+            patch(
+                "ziniao_automation.browser_connection.SeleniumStoreSession",
+                return_value=session,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                Exception,
+                "不会重新打开浏览器",
+            ):
+                connect_reusable_store(
+                    settings,
+                    "store-1",
+                    allow_start=False,
+                )
+
+        session.connect.assert_not_called()
+        session.attach.assert_not_called()
+        lease.release.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

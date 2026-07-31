@@ -2,6 +2,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.db.models import Prefetch
 from django.http import (
     FileResponse,
     Http404,
@@ -22,9 +23,28 @@ from tasks.models import ImportTask
 
 from .defaults import DEFAULT_EMAIL_SUBJECT
 from .forms import EmailQueueForm, EmailTemplateForm
-from .models import EmailDelivery, EmailSendingService, EmailTemplateAsset
-from .services.queue import QueueResult, queue_import_creators
+from .models import (
+    EmailDelivery,
+    EmailDeliveryAttempt,
+    EmailSendingService,
+    EmailTemplateAsset,
+)
+from .services.queue import (
+    QueueResult,
+    card_sent_creators,
+    import_email_creators,
+    queue_creators,
+    queue_import_creators,
+    selected_import_creators,
+)
+from .services.launcher import launch_email_sender
 from .services.runtime import get_service_state, request_service_stop
+from .services.retry import (
+    failed_today_queryset,
+    retry_available_queryset,
+    requeue_available_retries,
+    with_today_attempt_count,
+)
 from .services.template_content import (
     default_rich_html_for_editor,
     get_active_template_version,
@@ -35,9 +55,32 @@ from .services.template_content import (
 )
 
 
+def _candidate_payload(creator) -> dict[str, object]:
+    return {
+        "id": str(creator.pk),
+        "name": creator.nickname or creator.creator_id or "Creator",
+        "creatorId": str(creator.creator_id or "").strip().lstrip("@"),
+        "email": creator.email,
+    }
+
+
+def _queue_candidate_source(
+    *,
+    business_rule: str,
+    import_task: ImportTask | None,
+):
+    if import_task is None:
+        return None
+    if business_rule == EmailQueueForm.BusinessRule.MANUAL:
+        return import_email_creators(import_task)
+    return card_sent_creators(import_task)
+
+
 @require_http_methods(["GET", "POST"])
 def dashboard(request: HttpRequest) -> HttpResponse:
     queue_result: QueueResult | None = None
+    sender_started = False
+    sender_launch_error = ""
     template_saved = False
     active_version = get_active_template_version()
     template_form = EmailTemplateForm(
@@ -81,13 +124,56 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         elif action == "queue":
             form = EmailQueueForm(request.POST)
             if form.is_valid():
-                queue_result = queue_import_creators(
-                    import_task=form.cleaned_data["import_task"],
-                    limit=form.cleaned_data["limit"],
-                    retry_failed=form.cleaned_data["retry_failed"],
-                    template_version=active_version,
-                )
-                form = EmailQueueForm()
+                legacy_batch_rule = "business_rule" not in request.POST
+                try:
+                    if legacy_batch_rule:
+                        queue_result = queue_import_creators(
+                            import_task=form.cleaned_data["import_task"],
+                            limit=form.cleaned_data["limit"],
+                            retry_failed=True,
+                            template_version=active_version,
+                        )
+                    elif (
+                        form.cleaned_data["business_rule"]
+                        == EmailQueueForm.BusinessRule.MANUAL
+                    ):
+                        creators = selected_import_creators(
+                            import_task=form.cleaned_data["import_task"],
+                            creator_pks=form.cleaned_data[
+                                "selected_creator_ids"
+                            ],
+                        )
+                        queue_result = queue_creators(
+                            creators=creators,
+                            limit=len(creators),
+                            source_import_task=form.cleaned_data[
+                                "import_task"
+                            ],
+                            retry_failed=True,
+                            template_version=active_version,
+                        )
+                    else:
+                        queue_result = queue_creators(
+                            creators=card_sent_creators(
+                                form.cleaned_data["import_task"]
+                            ),
+                            limit=form.cleaned_data["limit"],
+                            source_import_task=form.cleaned_data[
+                                "import_task"
+                            ],
+                            retry_failed=True,
+                            template_version=active_version,
+                        )
+                except ValueError as error:
+                    form.add_error(None, str(error))
+                else:
+                    try:
+                        sender_started = launch_email_sender()
+                    except OSError as error:
+                        sender_launch_error = (
+                            f"邮件队列已创建，但发送服务启动失败：{error}"
+                        )
+                    form = EmailQueueForm()
         else:
             form = EmailQueueForm(request.POST)
             form.add_error(None, "无法识别提交的操作。")
@@ -103,11 +189,56 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         editor_html = rich_html_for_editor(active_version)
 
     today = timezone.localdate()
-    deliveries = EmailDelivery.objects.select_related(
-        "creator",
-        "template_version",
-    ).order_by("-updated_at", "-id")
+    deliveries = (
+        with_today_attempt_count(
+            EmailDelivery.objects
+            .select_related(
+                "creator",
+                "template_version",
+            )
+            .prefetch_related(
+                Prefetch(
+                    "attempts",
+                    queryset=EmailDeliveryAttempt.objects.order_by(
+                        "-started_at",
+                        "-id",
+                    ),
+                )
+            )
+        )
+        .order_by("-updated_at", "-id")
+    )
     email_service = get_service_state()
+    business_rule = (
+        form.data.get("business_rule")
+        if form.is_bound
+        else EmailQueueForm.BusinessRule.CARD_SENT
+    ) or EmailQueueForm.BusinessRule.CARD_SENT
+    candidate_import_task = None
+    raw_import_task_id = (
+        form.data.get("import_task") if form.is_bound else None
+    )
+    if raw_import_task_id:
+        try:
+            candidate_import_task = (
+                form.fields["import_task"]
+                .queryset.filter(pk=raw_import_task_id)
+                .first()
+            )
+        except (ValidationError, ValueError):
+            candidate_import_task = None
+    candidate_source = _queue_candidate_source(
+        business_rule=business_rule,
+        import_task=candidate_import_task,
+    )
+    if candidate_source is None:
+        candidate_creators = []
+        candidate_total = 0
+    else:
+        candidate_total = candidate_source.count()
+        candidate_creators = list(
+            candidate_source[: settings.CREATOR_EMAIL_DAILY_LIMIT]
+        )
     context = {
         "form": form,
         "template_form": template_form,
@@ -117,7 +248,9 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         "default_template_html": default_rich_html_for_editor(),
         "default_template_subject": DEFAULT_EMAIL_SUBJECT,
         "queue_result": queue_result,
-        "deliveries": deliveries[:50],
+        "sender_started": sender_started,
+        "sender_launch_error": sender_launch_error,
+        "deliveries": deliveries[:20],
         "pending_count": deliveries.filter(
             status=EmailDelivery.Status.PENDING
         ).count(),
@@ -131,16 +264,30 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         "sent_count": deliveries.filter(
             status=EmailDelivery.Status.SENT
         ).count(),
-        "failed_count": deliveries.filter(
-            status=EmailDelivery.Status.FAILED
+        "failed_today_count": failed_today_queryset().count(),
+        "retry_waiting_count": deliveries.filter(
+            status=EmailDelivery.Status.RETRY_WAITING,
+            next_retry_at__gt=timezone.now(),
         ).count(),
+        "retry_available_count": retry_available_queryset().count(),
+        "next_retry_at": (
+            deliveries.filter(
+                status=EmailDelivery.Status.RETRY_WAITING,
+                next_retry_at__isnull=False,
+            )
+            .order_by("next_retry_at")
+            .values_list("next_retry_at", flat=True)
+            .first()
+        ),
+        "retry_requeued_count": request.GET.get("retry_count", ""),
+        "retry_sender_started": request.GET.get("retry_started") == "1",
         "email_configured": bool(
             settings.EMAIL_HOST_USER
             and settings.EMAIL_HOST_PASSWORD
         ),
         "email_service": email_service,
         "daily_limit": settings.CREATOR_EMAIL_DAILY_LIMIT,
-        "max_attempts": settings.CREATOR_EMAIL_MAX_ATTEMPTS,
+        "max_attempts": settings.CREATOR_EMAIL_MAX_ATTEMPTS_PER_DAY,
         "template_image_max_mb": (
             settings.EMAIL_TEMPLATE_IMAGE_MAX_BYTES // (1024 * 1024)
         ),
@@ -152,8 +299,73 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             settings.EMAIL_TEMPLATE_TOTAL_IMAGE_MAX_BYTES
         ),
         "task_count": ImportTask.objects.count(),
+        "business_rule": business_rule,
+        "candidate_creators": candidate_creators,
+        "candidate_total": candidate_total,
+        "candidate_truncated": candidate_total > len(candidate_creators),
+        "selected_creator_ids": set(
+            form.data.getlist("selected_creator_ids")
+            if form.is_bound
+            else []
+        ),
     }
     return render(request, "mailing/dashboard.html", context)
+
+
+@require_GET
+def queue_candidates(request: HttpRequest) -> JsonResponse:
+    business_rule = request.GET.get(
+        "business_rule",
+        EmailQueueForm.BusinessRule.CARD_SENT,
+    )
+    if business_rule not in {
+        EmailQueueForm.BusinessRule.CARD_SENT,
+        EmailQueueForm.BusinessRule.MANUAL,
+    }:
+        return JsonResponse({"error": "不支持的业务规则。"}, status=400)
+
+    import_task = None
+    raw_task_id = request.GET.get("import_task")
+    if not raw_task_id:
+        return JsonResponse(
+            {
+                "candidates": [],
+                "total": 0,
+                "truncated": False,
+            }
+        )
+    try:
+        import_task = ImportTask.objects.filter(
+            pk=raw_task_id,
+            status__in=[
+                ImportTask.Status.SUCCESS,
+                ImportTask.Status.PARTIAL_SUCCESS,
+            ],
+        ).first()
+    except (ValidationError, ValueError):
+        import_task = None
+    if import_task is None:
+        return JsonResponse({"error": "指定导入批次不存在。"}, status=404)
+
+    source = _queue_candidate_source(
+        business_rule=business_rule,
+        import_task=import_task,
+    )
+    total = source.count() if source is not None else 0
+    candidates = list(
+        source[: settings.CREATOR_EMAIL_DAILY_LIMIT]
+        if source is not None
+        else []
+    )
+    return JsonResponse(
+        {
+            "candidates": [
+                _candidate_payload(creator) for creator in candidates
+            ],
+            "total": total,
+            "truncated": total > len(candidates),
+        }
+    )
 
 
 @require_GET
@@ -244,6 +456,17 @@ def service_status(request: HttpRequest) -> JsonResponse:
             ),
         }
     )
+
+
+@require_POST
+def retry_failed_deliveries(request: HttpRequest) -> HttpResponse:
+    requeued_count = requeue_available_retries()
+    sender_started = launch_email_sender() if requeued_count else False
+    query = (
+        f"?retry_count={requeued_count}"
+        f"&retry_started={1 if sender_started else 0}"
+    )
+    return redirect(f"{reverse('mailing:dashboard')}{query}")
 
 
 @require_POST

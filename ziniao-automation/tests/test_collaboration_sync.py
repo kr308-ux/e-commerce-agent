@@ -40,6 +40,27 @@ def snapshot(
     )
 
 
+def dom_element(
+    identifier: str,
+    *,
+    tag: str,
+    text: str,
+    href: str = "",
+    role: str = "",
+    descendants: list[Mock] | None = None,
+) -> Mock:
+    element = Mock()
+    element.id = identifier
+    element.tag_name = tag
+    element.text = text
+    element.rect = {"width": 120, "height": 32}
+    element.is_displayed.return_value = True
+    attributes = {"href": href, "role": role}
+    element.get_attribute.side_effect = lambda name: attributes.get(name, "")
+    element.find_elements.return_value = descendants or []
+    return element
+
+
 class TargetCollaborationSyncTests(unittest.TestCase):
     def test_read_only_click_waits_random_one_to_two_seconds(self) -> None:
         driver = Mock()
@@ -59,6 +80,156 @@ class TargetCollaborationSyncTests(unittest.TestCase):
         uniform.assert_called_once_with(1.0, 2.0)
         sleep.assert_called_once_with(1.625)
         element.click.assert_called_once_with()
+
+    def test_sync_restores_original_tab_and_closes_temporary_tabs(
+        self,
+    ) -> None:
+        driver = Mock()
+        driver.current_window_handle = "original"
+        driver.window_handles = ["original"]
+        sync = TargetCollaborationSync(driver)
+
+        def run_sync() -> list[dict[str, object]]:
+            driver.window_handles = ["original", "temporary"]
+            return [{"invitationGroupId": "1"}]
+
+        sync.sync_in_progress = Mock(side_effect=run_sync)
+
+        result = sync.sync()
+
+        self.assertEqual(result, [{"invitationGroupId": "1"}])
+        driver.switch_to.window.assert_any_call("temporary")
+        driver.close.assert_called_once_with()
+        driver.switch_to.window.assert_called_with("original")
+
+    def test_sync_waits_before_closing_temporary_target_tab(self) -> None:
+        driver = Mock()
+        driver.current_window_handle = "original"
+        driver.current_url = (
+            "https://affiliate.tiktokshopglobalselling.com/"
+            "connection/target-invitation?shop_id=1"
+        )
+        driver.window_handles = ["original"]
+        sync = TargetCollaborationSync(driver)
+
+        def run_sync() -> list[dict[str, object]]:
+            driver.window_handles = ["original", "temporary"]
+            return []
+
+        sync.sync_in_progress = Mock(side_effect=run_sync)
+        with (
+            patch(
+                "ziniao_automation.actions.collaboration_sync.random.uniform",
+                return_value=1.438,
+            ) as uniform,
+            patch(
+                "ziniao_automation.actions.collaboration_sync.time.sleep"
+            ) as sleep,
+        ):
+            sync.sync()
+
+        uniform.assert_called_once_with(1.0, 2.0)
+        sleep.assert_called_once_with(1.438)
+        driver.close.assert_called_once_with()
+
+    def test_open_target_page_can_enter_affiliate_from_store(self) -> None:
+        driver = Mock()
+        driver.current_url = (
+            "https://seller.us.tiktokshopglobalselling.com/homepage"
+        )
+        sync = TargetCollaborationSync(driver)
+        sync._activate_target_window = Mock(return_value=False)
+        sync._affiliate_window = Mock(side_effect=[None, "affiliate"])
+        sync._open_affiliate_from_store = Mock(return_value="affiliate")
+        sync._direct_target_url = Mock(
+            return_value=(
+                "https://affiliate.tiktokshopglobalselling.com/"
+                "connection/target-invitation?shop_id=1"
+            )
+        )
+        sync._wait_for_document = Mock()
+        sync._is_target_url = Mock(return_value=True)
+
+        sync.open_target_page()
+
+        sync._open_affiliate_from_store.assert_called_once_with()
+        driver.get.assert_called_once()
+
+    def test_affiliate_window_prefers_existing_affiliate_detail_page(
+        self,
+    ) -> None:
+        driver = Mock()
+        driver.window_handles = ["seller-landing", "affiliate-detail"]
+        sync = TargetCollaborationSync(driver)
+        sync._window_urls = Mock(
+            return_value={
+                "seller-landing": (
+                    "https://seller.us.tiktokshopglobalselling.com/"
+                    "affiliate/landing?shop_region=US"
+                ),
+                "affiliate-detail": (
+                    "https://affiliate.tiktokshopglobalselling.com/"
+                    "connection/target-invitation/detail"
+                    "?invitation_id=1&shop_id=2"
+                ),
+            }
+        )
+
+        selected = sync._affiliate_window()
+
+        self.assertEqual(selected, "affiliate-detail")
+        driver.switch_to.window.assert_called_once_with("affiliate-detail")
+
+    def test_affiliate_entry_collapses_equivalent_visible_controls(
+        self,
+    ) -> None:
+        anchor = dom_element(
+            "anchor",
+            tag="a",
+            text="联盟",
+            href=(
+                "https://seller.us.tiktokshopglobalselling.com/"
+                "affiliate/landing"
+            ),
+        )
+        menu = dom_element(
+            "menu",
+            tag="div",
+            text="联盟",
+            role="menuitem",
+            descendants=[anchor],
+        )
+        button = dom_element(
+            "button",
+            tag="button",
+            text="前往联盟中心首页",
+        )
+        driver = Mock()
+        driver.find_elements.side_effect = [
+            [anchor],
+            [anchor, menu, button],
+        ]
+        sync = TargetCollaborationSync(driver)
+
+        selected = sync._affiliate_entry()
+
+        self.assertIs(selected, anchor)
+
+    def test_direct_target_url_discards_detail_only_parameters(self) -> None:
+        current = (
+            "https://affiliate.tiktokshopglobalselling.com/"
+            "connection/target-invitation/detail"
+            "?invitation_id=1&enter_from=list&shop_region=US&shop_id=2"
+        )
+
+        target = TargetCollaborationSync._direct_target_url(current)
+
+        self.assertIn("/connection/target-invitation?", target)
+        self.assertIn("shop_region=US", target)
+        self.assertIn("shop_id=2", target)
+        self.assertIn("tab=1", target)
+        self.assertNotIn("invitation_id", target)
+        self.assertNotIn("enter_from", target)
 
     def test_record_maps_service_fields_and_preserves_raw_data(self) -> None:
         raw = record("7664550207413847821", "金色拉链+短裤13")

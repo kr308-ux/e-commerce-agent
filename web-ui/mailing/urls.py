@@ -8,6 +8,11 @@ app_name = "mailing"
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
     path(
+        "queue/candidates/",
+        views.queue_candidates,
+        name="queue_candidates",
+    ),
+    path(
         "template/preview/",
         views.template_preview,
         name="template_preview",
@@ -23,5 +28,10 @@ urlpatterns = [
         name="template_asset",
     ),
     path("service/status/", views.service_status, name="service_status"),
+    path(
+        "service/retry-failed/",
+        views.retry_failed_deliveries,
+        name="retry_failed",
+    ),
     path("service/stop/", views.stop_service, name="stop_service"),
 ]

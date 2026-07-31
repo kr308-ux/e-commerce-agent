@@ -374,6 +374,111 @@
     });
   }
 
+  let outreachRequestController = null;
+
+  const loadOutreachRecords = async (
+    targetUrl,
+    { updateHistory = true } = {}
+  ) => {
+    const panel = document.querySelector("[data-outreach-records]");
+    if (!panel) return;
+    outreachRequestController?.abort();
+    const requestController = new AbortController();
+    outreachRequestController = requestController;
+    const destination = new URL(targetUrl, window.location.href);
+    const fragmentUrl = new URL(panel.dataset.fragmentUrl, window.location.href);
+    fragmentUrl.search = destination.search;
+    panel.classList.add("is-loading");
+    panel.setAttribute("aria-busy", "true");
+    try {
+      const response = await fetch(fragmentUrl, {
+        headers: { Accept: "text/html" },
+        cache: "no-store",
+        signal: requestController.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`加载触达记录失败（HTTP ${response.status}）。`);
+      }
+      const html = await response.text();
+      const parsed = new DOMParser().parseFromString(html, "text/html");
+      const replacement = parsed.querySelector("[data-outreach-records]");
+      if (!replacement) {
+        throw new Error("触达记录响应格式错误。");
+      }
+      panel.replaceWith(replacement);
+      if (updateHistory) {
+        const historyUrl = new URL(destination, window.location.href);
+        historyUrl.pathname = document.querySelector(
+          "[data-record-filter-form]"
+        )?.action
+          ? new URL(
+            document.querySelector("[data-record-filter-form]").action,
+            window.location.href
+          ).pathname
+          : window.location.pathname;
+        historyUrl.hash = "outreach-records";
+        window.history.pushState({}, "", historyUrl);
+      }
+      replacement.scrollIntoView({ behavior: "smooth", block: "start" });
+    } finally {
+      if (outreachRequestController === requestController) {
+        outreachRequestController = null;
+      }
+      document.querySelector("[data-outreach-records]")?.classList.remove(
+        "is-loading"
+      );
+      document.querySelector("[data-outreach-records]")?.removeAttribute(
+        "aria-busy"
+      );
+    }
+  };
+
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest(
+      "[data-outreach-records] [data-record-navigation]"
+    );
+    if (
+      !link
+      || event.defaultPrevented
+      || event.button !== 0
+      || event.metaKey
+      || event.ctrlKey
+      || event.shiftKey
+      || event.altKey
+    ) {
+      return;
+    }
+    event.preventDefault();
+    loadOutreachRecords(link.href).catch((error) => {
+      if (error.name !== "AbortError") window.location.assign(link.href);
+    });
+  });
+
+  document.addEventListener("submit", (event) => {
+    const form = event.target.closest(
+      "[data-outreach-records] [data-record-filter-form]"
+    );
+    if (!form) return;
+    event.preventDefault();
+    const destination = new URL(form.action, window.location.href);
+    destination.search = new URLSearchParams(new FormData(form)).toString();
+    destination.hash = "outreach-records";
+    loadOutreachRecords(destination).catch((error) => {
+      if (error.name !== "AbortError") window.location.assign(destination);
+    });
+  });
+
+  window.addEventListener("popstate", () => {
+    if (
+      window.location.hash === "#outreach-records"
+      && document.querySelector("[data-outreach-records]")
+    ) {
+      loadOutreachRecords(window.location.href, {
+        updateHistory: false,
+      }).catch(() => window.location.reload());
+    }
+  });
+
   const monitor = document.querySelector("[data-task-monitor]");
   if (!monitor) return;
   const activeStatuses = new Set(["QUEUED", "IMPORTING", "PENDING", "RUNNING"]);

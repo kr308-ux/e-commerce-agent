@@ -27,6 +27,12 @@ class CollaborationSyncCapabilityError(RuntimeError):
     """Raised until a store-page collaboration collector is available."""
 
 
+class CollaborationSyncBrowserBusyError(
+    CollaborationSyncCapabilityError
+):
+    """Raised when another task temporarily owns the store browser."""
+
+
 @dataclass(frozen=True)
 class CollaborationSyncBatch:
     """A collector result with an explicit full-snapshot guarantee."""
@@ -188,6 +194,11 @@ class SubprocessCollaborationExecutor:
                 sensitive = os.getenv(name, "")
                 if sensitive:
                     message = message.replace(sensitive, "[REDACTED]")
+            if payload.get("errorCode") == "BROWSER_BUSY":
+                raise CollaborationSyncBrowserBusyError(
+                    message[-2000:]
+                    or "目标店铺浏览器正忙，请稍后重试。"
+                )
             raise CollaborationSyncCapabilityError(
                 message[-2000:]
                 or (
@@ -203,14 +214,17 @@ class SubprocessCollaborationExecutor:
                 message = error.get("userMessage") or error.get("message")
             else:
                 message = error
-            raise CollaborationSyncCapabilityError(
-                str(
-                    message
-                    or payload.get("errorMessage")
-                    or payload.get("errorCode")
-                    or "定向合作同步未返回成功状态。"
-                )
+            normalized_message = str(
+                message
+                or payload.get("errorMessage")
+                or payload.get("errorCode")
+                or "定向合作同步未返回成功状态。"
             )
+            if payload.get("errorCode") == "BROWSER_BUSY":
+                raise CollaborationSyncBrowserBusyError(
+                    normalized_message
+                )
+            raise CollaborationSyncCapabilityError(normalized_message)
         data = payload.get("data")
         if not isinstance(data, dict):
             data = payload
@@ -363,6 +377,18 @@ class CollaborationSyncRunner:
                 complete=complete,
                 explicit_empty=explicit_empty,
             )
+        except CollaborationSyncBrowserBusyError as error:
+            self.job.status = CollaborationSyncJob.Status.PENDING
+            self.job.error_code = "BROWSER_BUSY"
+            self.job.error_message = (
+                "目标店铺正在执行其他自动化操作，"
+                "同步任务已重新排队等待。"
+            )
+            if str(error):
+                self.job.error_message += f" 原因：{error}"
+            self.job.finished_at = None
+            self.job.save()
+            return self.job
         except Exception as error:
             self.job.status = CollaborationSyncJob.Status.FAILED
             self.job.error_code = type(error).__name__

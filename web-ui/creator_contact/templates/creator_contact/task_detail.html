@@ -195,6 +195,8 @@
                             </div>
                             {% if target.status == "INVITATION_COMPLETED" %}
                             <small class="block-muted">邀请已完成，等待/重试批量卡片阶段</small>
+                            {% elif target.status == "REVIEW_REQUIRED" %}
+                            <small class="target-error">已检测到写入证据，禁止自动重试，请人工复核</small>
                             {% endif %}
                         </td>
                         <td>

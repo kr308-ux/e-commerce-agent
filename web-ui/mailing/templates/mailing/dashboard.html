@@ -17,7 +17,7 @@
     <div>
         <p class="eyebrow">EMAIL DELIVERY</p>
         <h1>邮件发送</h1>
-        <p class="welcome-copy">从已确认的达人导入批次创建防重队列，由邮件服务逐封串行发送。</p>
+        <p class="welcome-copy">按合作卡片结果或手动选择达人创建防重队列，由邮件服务逐封串行发送。</p>
     </div>
     <div class="service-status {% if email_service.status == 'RUNNING' %}is-ready{% elif email_service.status == 'STOPPING' %}is-warning{% endif %}">
         <span></span>
@@ -50,6 +50,46 @@
         <small>不包含失败与跳过</small>
     </article>
 </section>
+
+{% if retry_requeued_count != "" %}
+<div class="queue-result" role="status">
+    <span class="queue-result-icon">↻</span>
+    <div>
+        <strong>可重试邮件已处理</strong>
+        <p>
+            已重新加入队列 {{ retry_requeued_count }} 封。
+            {% if retry_sender_started %}邮件服务已启动。{% elif retry_requeued_count != "0" %}邮件服务正在运行或等待启动。{% endif %}
+        </p>
+    </div>
+</div>
+{% endif %}
+
+{% if failed_today_count or retry_waiting_count or retry_available_count %}
+<section class="mail-retry-summary" aria-label="失败重试提醒">
+    <div>
+        <span class="section-kicker">DAILY RETRY</span>
+        <strong>邮件失败重试提醒</strong>
+        <p>
+            今日仍有 {{ failed_today_count }} 位达人发送失败。
+            {% if retry_waiting_count %}
+            其中 {{ retry_waiting_count }} 位今日已达到 {{ max_attempts }} 次上限，
+            {% if next_retry_at %}{{ next_retry_at|date:"Y-m-d H:i" }} 后可继续。{% else %}明日可继续。{% endif %}
+            {% endif %}
+            {% if retry_available_count %}
+            当前有 {{ retry_available_count }} 封邮件可以继续发送。
+            {% endif %}
+        </p>
+    </div>
+    {% if retry_available_count %}
+    <form method="post" action="{% url 'mailing:retry_failed' %}">
+        {% csrf_token %}
+        <button class="create-button" type="submit">
+            继续发送可重试邮件 <span>→</span>
+        </button>
+    </form>
+    {% endif %}
+</section>
+{% endif %}
 
 {% if template_saved %}
 <div class="queue-result" role="status">
@@ -176,7 +216,15 @@
             新增 {{ queue_result.queued }} 封，重新入队 {{ queue_result.requeued }} 封，
             已在队列 {{ queue_result.already_pending }} 封，已发送防重 {{ queue_result.already_sent }} 封。
             {% if queue_result.invalid_email %}无效邮箱 {{ queue_result.invalid_email }} 个。{% endif %}
+            {% if queue_result.deferred_today %}今日已达重试上限 {{ queue_result.deferred_today }} 封，明日可继续。{% endif %}
         </p>
+        {% if sender_launch_error %}
+        <p class="delivery-error">{{ sender_launch_error }}</p>
+        {% elif sender_started %}
+        <p>邮件发送服务已自动启动，队列处理结束后会自动关闭。</p>
+        {% else %}
+        <p>邮件发送服务已在运行，或当前没有需要发送的邮件。</p>
+        {% endif %}
     </div>
 </div>
 {% endif %}
@@ -190,12 +238,56 @@
             </div>
             <span class="queue-limit">每日上限 {{ daily_limit }}</span>
         </div>
-        <form class="mail-queue-form" method="post">
+        <form
+            class="mail-queue-form"
+            method="post"
+            data-mail-queue-form
+            data-candidates-url="{% url 'mailing:queue_candidates' %}"
+            data-daily-limit="{{ daily_limit }}"
+        >
             {% csrf_token %}
             <input type="hidden" name="action" value="queue">
-            <div class="mail-field mail-field-limit">
+            {% if form.non_field_errors %}
+            <div class="mail-form-errors" role="alert">
+                {{ form.non_field_errors|join:"；" }}
+            </div>
+            {% endif %}
+            <fieldset class="mail-business-rules">
+                <legend>业务规则</legend>
+                <label class="mail-business-rule {% if business_rule == 'CARD_SENT' %}is-active{% endif %}">
+                    <input
+                        type="radio"
+                        name="business_rule"
+                        value="CARD_SENT"
+                        {% if business_rule == 'CARD_SENT' %}checked{% endif %}
+                    >
+                    <span>
+                        <strong>合作卡片发送成功</strong>
+                        <small>筛选已完成合作卡片发送并通过最终验收的达人</small>
+                    </span>
+                </label>
+                <label class="mail-business-rule {% if business_rule == 'MANUAL' %}is-active{% endif %}">
+                    <input
+                        type="radio"
+                        name="business_rule"
+                        value="MANUAL"
+                        {% if business_rule == 'MANUAL' %}checked{% endif %}
+                    >
+                    <span>
+                        <strong>手动选择达人</strong>
+                        <small>从指定导入批次中自行勾选需要邮件联系的达人</small>
+                    </span>
+                </label>
+                {% if form.business_rule.errors %}
+                <p class="form-error">{{ form.business_rule.errors|join:"；" }}</p>
+                {% endif %}
+            </fieldset>
+            <div
+                class="mail-field mail-field-limit"
+                data-manual-import-field
+            >
                 <label for="{{ form.import_task.id_for_label }}">
-                    {{ form.import_task.label }}
+                    关联导入批次
                     <small>仅显示包含有效邮箱数据的导入批次</small>
                 </label>
                 {{ form.import_task }}
@@ -203,23 +295,86 @@
                 <p class="form-error">{{ form.import_task.errors|join:"；" }}</p>
                 {% endif %}
             </div>
-            <div class="mail-field mail-field-limit">
+            <div
+                class="mail-field mail-field-limit"
+                data-queue-limit-field
+                {% if business_rule == 'MANUAL' %}hidden{% endif %}
+            >
                 <label for="{{ form.limit.id_for_label }}">
                     {{ form.limit.label }}
-                    <small>按达人销售额从高到低选择</small>
                 </label>
                 {{ form.limit }}
                 {% if form.limit.errors %}
                 <p class="form-error">{{ form.limit.errors|join:"；" }}</p>
                 {% endif %}
             </div>
-            <label class="mail-check" for="{{ form.retry_failed.id_for_label }}">
-                {{ form.retry_failed }}
-                <span>
-                    <strong>{{ form.retry_failed.label }}</strong>
-                    <small>仅在确认失败邮件没有实际送达后使用</small>
-                </span>
-            </label>
+            <section class="mail-candidate-picker" data-candidate-picker>
+                <div class="mail-candidate-heading">
+                    <div>
+                        <strong>待入队达人</strong>
+                        <small>
+                            显示达人名称和达人 ID ·
+                            <b data-candidate-count>{{ candidate_total }}</b> 位可用
+                        </small>
+                    </div>
+                    <button
+                        class="secondary-button mail-select-all"
+                        type="button"
+                        data-select-all
+                        {% if business_rule != 'MANUAL' %}hidden{% endif %}
+                    >全选</button>
+                </div>
+                {% if form.selected_creator_ids.errors %}
+                <p class="form-error">{{ form.selected_creator_ids.errors|join:"；" }}</p>
+                {% endif %}
+                <div class="table-wrap mail-candidate-table-wrap">
+                    <table class="mail-candidate-table">
+                        <thead>
+                            <tr>
+                                <th class="mail-select-column">选择</th>
+                                <th>达人名称</th>
+                                <th>达人 ID</th>
+                                <th>邮箱</th>
+                            </tr>
+                        </thead>
+                        <tbody data-candidate-body>
+                            {% for candidate in candidate_creators %}
+                            <tr>
+                                <td class="mail-select-column">
+                                    {% if business_rule == "MANUAL" %}
+                                    <input
+                                        type="checkbox"
+                                        name="selected_creator_ids"
+                                        value="{{ candidate.pk }}"
+                                        aria-label="选择 {{ candidate.nickname|default:candidate.creator_id }}"
+                                        {% if candidate.pk|stringformat:"s" in selected_creator_ids %}checked{% endif %}
+                                    >
+                                    {% else %}
+                                    <span class="delivery-success" aria-label="符合规则">✓</span>
+                                    {% endif %}
+                                </td>
+                                <td><strong>{{ candidate.nickname|default:candidate.creator_id }}</strong></td>
+                                <td>{{ candidate.creator_id|cut:"@" }}</td>
+                                <td>{{ candidate.email }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="4" class="empty-cell">
+                                    {% if business_rule == "MANUAL" %}
+                                    请选择包含达人邮箱的导入批次。
+                                    {% else %}
+                                    请选择导入批次，或该批次暂无合作卡片发送成功且包含邮箱的达人。
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <p class="mail-candidate-note" data-candidate-note {% if not candidate_truncated %}hidden{% endif %}>
+                    当前最多展示并选择 {{ daily_limit }} 位达人。
+                </p>
+            </section>
             <div class="mail-form-footer">
                 <p>页面只创建队列，邮件服务负责串行投递。</p>
                 <button class="create-button" type="submit">加入发送队列 <span>→</span></button>
@@ -236,8 +391,8 @@
         </div>
         <ol class="mail-rules">
             <li><span>1</span><div><strong>全局防重</strong><small>同一达人发送成功后不再入队</small></div></li>
-            <li><span>2</span><div><strong>逐封发送</strong><small>每次只处理一封，避免触发频率限制</small></div></li>
-            <li><span>3</span><div><strong>失败人工确认</strong><small>失败邮件不会自动重试</small></div></li>
+            <li><span>2</span><div><strong>随机间隔</strong><small>每封邮件间隔 30–60 秒随机发送</small></div></li>
+            <li><span>3</span><div><strong>每日重试</strong><small>每天最多尝试 {{ max_attempts }} 次，达到上限后明日可继续</small></div></li>
         </ol>
         {% if email_service.status == "RUNNING" or email_service.status == "STOPPING" %}
         <form method="post" action="{% url 'mailing:stop_service' %}">
@@ -254,9 +409,6 @@
         {% elif not email_configured %}
         <p class="mail-warning">SMTP 尚未配置，邮件服务无法启动。</p>
         {% endif %}
-        {% if failed_count %}
-        <p class="mail-warning">{{ failed_count }} 封失败邮件等待人工核对。</p>
-        {% endif %}
     </aside>
 </div>
 
@@ -272,7 +424,8 @@
         <table class="mail-table">
             <thead>
                 <tr>
-                    <th>达人</th>
+                    <th>达人名称</th>
+                    <th>达人 ID</th>
                     <th>收件邮箱</th>
                     <th>状态</th>
                     <th>尝试</th>
@@ -285,16 +438,24 @@
                 <tr id="delivery-{{ delivery.id }}">
                     <td>
                         <strong>{{ delivery.creator_name_snapshot }}</strong>
-                        <small>@{{ delivery.creator_id_snapshot|default:"—" }}</small>
                     </td>
+                    <td>{{ delivery.creator_id_snapshot|default:"—" }}</td>
                     <td>{{ delivery.recipient_email }}</td>
                     <td>
                         <span class="status-pill status-{{ delivery.status|lower }}">
                             <i></i>{{ delivery.get_status_display }}
                         </span>
                     </td>
-                    <td>{{ delivery.attempt_count }} / {{ max_attempts }}</td>
-                    <td>{{ delivery.updated_at|date:"m-d H:i:s" }}</td>
+                    <td>
+                        <strong>今日 {{ delivery.today_attempt_count }} / {{ max_attempts }}</strong>
+                        <small>累计 {{ delivery.attempt_count }} 次</small>
+                    </td>
+                    <td>
+                        <strong>{{ delivery.updated_at|date:"m-d H:i:s" }}</strong>
+                        {% if delivery.status == "RETRY_WAITING" and delivery.next_retry_at %}
+                        <small>{{ delivery.next_retry_at|date:"m-d H:i" }} 可重试</small>
+                        {% endif %}
+                    </td>
                     <td>
                         {% if delivery.status == "SENT" %}
                         <span class="delivery-success">已触达</span>
@@ -303,11 +464,32 @@
                         {% else %}
                         <span class="delivery-muted">—</span>
                         {% endif %}
+                        {% if delivery.attempts.all %}
+                        <details class="mail-attempt-history">
+                            <summary>查看尝试记录</summary>
+                            <ol>
+                                {% for attempt in delivery.attempts.all %}
+                                <li>
+                                    <span>
+                                        {{ attempt.attempt_date|date:"m-d" }}
+                                        第 {{ attempt.daily_sequence }} 次
+                                        · {{ attempt.get_status_display }}
+                                    </span>
+                                    <small>
+                                        {{ attempt.started_at|date:"H:i:s" }}
+                                        {% if attempt.error_message %} · {{ attempt.error_message|truncatechars:42 }}{% endif %}
+                                        {% if attempt.is_legacy_snapshot %} · 历史快照{% endif %}
+                                    </small>
+                                </li>
+                                {% endfor %}
+                            </ol>
+                        </details>
+                        {% endif %}
                     </td>
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="6" class="empty-cell">还没有邮件投递记录，请先添加邮件到队列。</td>
+                    <td colspan="7" class="empty-cell">还没有邮件投递记录，请先添加邮件到队列。</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -326,4 +508,5 @@
 {{ default_template_html|json_script:"email-template-default-html" }}
 {{ default_template_subject|json_script:"email-template-default-subject" }}
 <script src="{% static 'mailing/editor.js' %}?v=20260730-rich-editor1" defer></script>
+<script src="{% static 'mailing/queue.js' %}?v=20260730-business-rules1" defer></script>
 {% endblock %}

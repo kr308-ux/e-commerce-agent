@@ -96,12 +96,37 @@ class AcceptedCollaborationWorkflow(CreatorContactWorkflow):
             )
         return matches[0]
 
-    @staticmethod
-    def _accepted_cell(row: WebElement) -> WebElement:
-        cells = row.find_elements(By.CSS_SELECTOR, "td")
-        if len(cells) < 2:
-            raise ZiniaoWorkflowError("目标项目行缺少“已接受的达人”列。")
-        return cells[1]
+    def _project_name_click_target(
+        self,
+        row: WebElement,
+        invitation_name: str,
+    ) -> WebElement:
+        matches = [
+            element
+            for element in self._visible_exact_text_elements(
+                invitation_name,
+                root=row,
+            )
+            if element.is_enabled()
+        ]
+        literal = self._xpath_literal(invitation_name)
+        leaf_matches = {
+            element.id: element
+            for element in matches
+            if not any(
+                self._is_visible(descendant)
+                and descendant.is_enabled()
+                for descendant in element.find_elements(
+                    By.XPATH,
+                    f".//*[normalize-space()={literal}]",
+                )
+            )
+        }
+        if len(leaf_matches) != 1:
+            raise ZiniaoWorkflowError(
+                "目标项目行未找到唯一可点击的项目名称。"
+            )
+        return next(iter(leaf_matches.values()))
 
     def _activate_accepted_creators_window(
         self,
@@ -206,7 +231,7 @@ class AcceptedCollaborationWorkflow(CreatorContactWorkflow):
         invitation_name: str,
         invitation_group_id: str,
     ) -> WorkflowStepResult:
-        """Open the accepted-creator column for one exact project."""
+        """Open one exact project by clicking its project name."""
         name = str(invitation_name or "").strip()
         group_id = str(invitation_group_id or "").strip()
         if not name or not group_id.isdigit():
@@ -269,26 +294,12 @@ class AcceptedCollaborationWorkflow(CreatorContactWorkflow):
         else:
             sync.open_target_page()
         sync.activate_in_progress()
-        project = self._project_snapshot(sync, name, group_id)
+        self._project_snapshot(sync, name, group_id)
         row = self._unique_row_with_text(
             name,
             missing_message="未找到目标定向合作项目所在的唯一行。",
         )
-        accepted_cell = self._accepted_cell(row)
-        accepted_count = int(project.get("acceptedCreatorCount") or 0)
-        if accepted_count <= 0:
-            raise ZiniaoWorkflowError(
-                "目标定向合作项目当前没有已接受的达人。"
-            )
-        click_targets = [
-            element
-            for element in accepted_cell.find_elements(
-                By.CSS_SELECTOR,
-                "a, button, [role='button']",
-            )
-            if self._is_visible(element) and element.is_enabled()
-        ]
-        self._click(click_targets[0] if len(click_targets) == 1 else accepted_cell)
+        self._click(self._project_name_click_target(row, name))
         detail_window = self._wait(
             lambda _driver: (
                 self._activate_accepted_creators_window(name, group_id)
@@ -298,7 +309,7 @@ class AcceptedCollaborationWorkflow(CreatorContactWorkflow):
                     require_group_marker=False,
                 )
             ),
-            message="点击“已接受的达人”后未进入项目达人详情页。",
+            message="点击项目名称后未进入项目达人详情页。",
         )
         self.driver.execute_script(
             "window.sessionStorage.setItem("
@@ -318,6 +329,7 @@ class AcceptedCollaborationWorkflow(CreatorContactWorkflow):
             self.driver.close()
             self.driver.switch_to.window(detail_window["handle"])
         details_clicked = self._ensure_creator_details_expanded()
+        accepted_count = len(self._visible_rows())
         self._project_name = name
         self._project_group_id = group_id
         return WorkflowStepResult(

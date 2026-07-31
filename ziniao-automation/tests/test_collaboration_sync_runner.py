@@ -7,8 +7,10 @@ from contextlib import redirect_stdout
 from unittest.mock import Mock, patch
 
 from ziniao_automation.collaboration_sync_runner import main, sync_store
-from ziniao_automation.errors import ZiniaoConfigurationError
-from ziniao_automation.models import StoreInfo
+from ziniao_automation.errors import (
+    ZiniaoConfigurationError,
+    ZiniaoConnectionError,
+)
 
 
 class CollaborationSyncRunnerTests(unittest.TestCase):
@@ -42,12 +44,7 @@ class CollaborationSyncRunnerTests(unittest.TestCase):
     )
     @patch(
         "ziniao_automation.collaboration_sync_runner."
-        "SeleniumStoreSession"
-    )
-    @patch("ziniao_automation.collaboration_sync_runner.ZiniaoClient")
-    @patch(
-        "ziniao_automation.collaboration_sync_runner."
-        "ZiniaoProcessManager"
+        "connect_reusable_store"
     )
     @patch(
         "ziniao_automation.collaboration_sync_runner."
@@ -56,31 +53,16 @@ class CollaborationSyncRunnerTests(unittest.TestCase):
     def test_success_uses_exact_store_and_returns_contract(
         self,
         settings_from_env: Mock,
-        process_manager: Mock,
-        client_class: Mock,
-        session_class: Mock,
+        connect_reusable: Mock,
         sync_class: Mock,
     ) -> None:
         settings = Mock()
         settings_from_env.return_value = settings
-        client = client_class.return_value
-        store = StoreInfo(
-            browser_id="store-1",
-            browser_name="Vaelos",
-            browser_oauth="secret",
-        )
-        client.list_stores.return_value = [
-            store,
-            StoreInfo(
-                browser_id="store-2",
-                browser_name="Other",
-                browser_oauth="other-secret",
-            ),
-        ]
         attached = Mock(driver=Mock())
-        session = session_class.return_value
-        session.__enter__.return_value = attached
-        session.__exit__.return_value = None
+        connection = connect_reusable.return_value
+        connection.__enter__.return_value = connection
+        connection.__exit__.return_value = None
+        connection.session = attached
         expected = [
             {
                 "name": "Plan",
@@ -96,9 +78,11 @@ class CollaborationSyncRunnerTests(unittest.TestCase):
         self.assertEqual(payload["storeId"], "store-1")
         self.assertEqual(payload["options"], expected)
         self.assertEqual(payload["errorCode"], "")
-        process_manager.return_value.ensure_started.assert_called_once()
-        client.update_core.assert_called_once()
-        session_class.assert_called_once_with(client, settings, store)
+        connect_reusable.assert_called_once_with(
+            settings,
+            "store-1",
+            allow_start=False,
+        )
         sync_class.assert_called_once_with(attached.driver)
 
     def test_empty_store_id_returns_standard_error_shape(self) -> None:
@@ -114,6 +98,30 @@ class CollaborationSyncRunnerTests(unittest.TestCase):
                 "errorMessage": "必须提供非空 storeId。",
             },
         )
+
+    @patch(
+        "ziniao_automation.collaboration_sync_runner."
+        "connect_reusable_store"
+    )
+    @patch(
+        "ziniao_automation.collaboration_sync_runner."
+        "ZiniaoSettings.from_env"
+    )
+    def test_busy_browser_is_reported_as_retryable_queue_condition(
+        self,
+        settings_from_env: Mock,
+        connect_reusable: Mock,
+    ) -> None:
+        settings_from_env.return_value = Mock()
+        connect_reusable.side_effect = ZiniaoConnectionError(
+            "目标店铺正由另一个自动化进程操作，"
+            "等待浏览器控制权超时。"
+        )
+
+        payload = sync_store("store-1")
+
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["errorCode"], "BROWSER_BUSY")
 
 
 if __name__ == "__main__":

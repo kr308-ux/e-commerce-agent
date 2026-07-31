@@ -138,6 +138,9 @@ def _dashboard_context(
             excluded_count = selection.excluded_count
             manually_selected_set = set(manually_selected_ids)
             for creator in candidate_preview:
+                creator.preview_creator_id = (
+                    str(creator.creator_id or "").strip().lstrip("@")
+                )
                 creator.manually_selected = (
                     str(creator.pk) in manually_selected_set
                 )
@@ -427,6 +430,9 @@ def task_status(
             "successCount": counts[CreatorContactTarget.Status.SUCCESS],
             "failedCount": counts[CreatorContactTarget.Status.FAILED],
             "skippedCount": counts[CreatorContactTarget.Status.SKIPPED],
+            "reviewRequiredCount": counts[
+                CreatorContactTarget.Status.REVIEW_REQUIRED
+            ],
             "invitationCompletedCount": contact_task.targets.filter(
                 invitation_created=True
             ).count(),

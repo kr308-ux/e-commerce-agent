@@ -374,6 +374,12 @@ def _step_output_summary(data: object) -> dict[str, Any]:
         "findCreatorsObstructionSelector",
         "domFallbackUsed",
         "domFallbackEvents",
+        "stateMachineStages",
+        "modelFallbackStageUsed",
+        "adaptiveLocatorUsed",
+        "adaptiveLocatorEvents",
+        "targetCollaborationRefreshAttempted",
+        "targetCollaborationRefreshWaitSeconds",
     }
     return {
         key: _json_safe(value)
@@ -447,7 +453,7 @@ class SubprocessContactExecutor:
             "--store-id",
             task.store_id,
             "--creator",
-            target.creator_handle_snapshot,
+            target.imported_creator_id,
             "--invitation-name",
             task.invitation_name_snapshot,
             "--invitation-group-id",
@@ -536,6 +542,9 @@ class SubprocessContactExecutor:
             "findCreatorsSearchReady": False,
             "skipCreator": False,
             "skipReason": "",
+            "reviewRequired": False,
+            "taskFatal": False,
+            "failureStage": "",
             "invitationSyncPending": False,
             "refreshAttempts": 0,
             "randomWaitSeconds": [],
@@ -619,6 +628,26 @@ class SubprocessContactExecutor:
                                 if error.get("domFallbackEvents")
                                 else {}
                             ),
+                        }
+                    ),
+                    "adaptiveLocator": _json_safe(
+                        {
+                            "order": error.get(
+                                "adaptiveLocatorOrder"
+                            )
+                            or [],
+                            "events": error.get(
+                                "adaptiveLocatorEvents"
+                            )
+                            or [],
+                            "diagnosis": error.get(
+                                "modelDiagnosis"
+                            )
+                            or {},
+                            "stateMachineStages": error.get(
+                                "stateMachineStages"
+                            )
+                            or [],
                         }
                     ),
                 }
@@ -711,6 +740,9 @@ class SubprocessContactExecutor:
                 "errorMessage",
                 "skipCreator",
                 "skipReason",
+                "reviewRequired",
+                "taskFatal",
+                "failureStage",
                 "invitationCompleted",
                 "invitationButtonClicked",
                 "invitationSubmissionConfirmed",
@@ -1477,6 +1509,7 @@ class CreatorContactRunner:
                 CreatorContactTarget.Status.SUCCESS,
                 CreatorContactTarget.Status.INVITATION_COMPLETED,
                 CreatorContactTarget.Status.SKIPPED,
+                CreatorContactTarget.Status.REVIEW_REQUIRED,
             }:
                 self._update_progress(index, len(targets), target)
                 continue
@@ -1518,6 +1551,17 @@ class CreatorContactRunner:
             self._persist_steps(target, result.get("steps") or [])
             self._persist_target_result(target, result)
             self._update_progress(index, len(targets), target)
+            if result.get("taskFatal") is True:
+                return self._fail_task(
+                    str(
+                        result.get("errorCode")
+                        or "CONTACT_TASK_FATAL"
+                    ),
+                    str(
+                        result.get("errorMessage")
+                        or "店铺浏览器连接阶段发生任务级错误。"
+                    ),
+                )
             if self._cancellation_requested():
                 return self._cancel_task()
 
@@ -1758,6 +1802,15 @@ class CreatorContactRunner:
                                 if step.get("domFallback")
                                 else {}
                             ),
+                            **(
+                                {
+                                    "adaptiveLocator": step.get(
+                                        "adaptiveLocator"
+                                    )
+                                }
+                                if step.get("adaptiveLocator")
+                                else {}
+                            ),
                         }
                     ),
                     "error_code": str(step.get("errorCode") or "")[:100],
@@ -1801,6 +1854,7 @@ class CreatorContactRunner:
                 }
             )
             skip_requested = result.get("skipCreator") is True
+            review_required = result.get("reviewRequired") is True
             invitation_evidence_error = _invitation_evidence_error(
                 self.task,
                 result,
@@ -1819,6 +1873,19 @@ class CreatorContactRunner:
                 locked.current_step = "邀请按钮已点击，等待批量发送卡片"
                 locked.error_code = ""
                 locked.error_message = ""
+            elif review_required:
+                locked.status = (
+                    CreatorContactTarget.Status.REVIEW_REQUIRED
+                )
+                locked.current_step = "存在写入证据，需人工复核"
+                locked.error_code = str(
+                    result.get("errorCode")
+                    or "CONTACT_REVIEW_REQUIRED"
+                )[:100]
+                locked.error_message = _redact(
+                    result.get("errorMessage")
+                    or "自动恢复与模型兜底均失败，且已存在写入证据。"
+                )
             elif skip_requested:
                 locked.status = CreatorContactTarget.Status.SKIPPED
                 exact_creator_unavailable = (
@@ -1978,6 +2045,9 @@ class CreatorContactRunner:
         failed = counts[CreatorContactTarget.Status.FAILED]
         succeeded = counts[CreatorContactTarget.Status.SUCCESS]
         skipped = counts[CreatorContactTarget.Status.SKIPPED]
+        review_required = counts[
+            CreatorContactTarget.Status.REVIEW_REQUIRED
+        ]
         card_pending = counts[
             CreatorContactTarget.Status.INVITATION_COMPLETED
         ]
@@ -1988,9 +2058,13 @@ class CreatorContactRunner:
             card_sent=True,
             final_send_verified=True,
         ).count()
-        if failed == 0 and card_pending == 0:
+        if (
+            failed == 0
+            and card_pending == 0
+            and review_required == 0
+        ):
             status = CreatorContactTask.Status.SUCCESS
-        elif succeeded or skipped or card_pending:
+        elif succeeded or skipped or card_pending or review_required:
             status = CreatorContactTask.Status.PARTIAL_SUCCESS
         else:
             status = CreatorContactTask.Status.FAILED
@@ -2004,6 +2078,7 @@ class CreatorContactRunner:
             "successCount": succeeded,
             "failedCount": failed,
             "skippedCount": skipped,
+            "reviewRequiredCount": review_required,
             "invitationCompletedCount": invitations,
             "cardSentCount": cards_sent,
             "cardPendingCount": card_pending,
@@ -2011,6 +2086,7 @@ class CreatorContactRunner:
         first_failure = self.task.targets.filter(
             status__in=(
                 CreatorContactTarget.Status.FAILED,
+                CreatorContactTarget.Status.REVIEW_REQUIRED,
                 CreatorContactTarget.Status.INVITATION_COMPLETED,
             )
         ).order_by("rank").first()

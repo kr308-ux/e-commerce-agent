@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import tempfile
@@ -115,11 +116,32 @@ class ImportRuleAdvisor:
         )
         environment = os.environ.copy()
         command: list[str] = []
+        model_ref = "project-deepseek/deepseek-v4-pro"
         started_at = time.perf_counter()
         try:
             with tempfile.TemporaryDirectory(
                 prefix="creator-import-rule-"
             ) as isolated_directory:
+                # 写入临时项目配置，使 opencode 使用 DEEPSEEK_API_KEY 环境变量
+                # 而非全局 auth.json，实现项目级密钥隔离
+                temp_config = {
+                    "provider": {
+                        "project-deepseek": {
+                            "models": {
+                                "deepseek-v4-pro": {"name": "DeepSeek V4 Pro"}
+                            },
+                            "npm": "@ai-sdk/openai-compatible",
+                            "options": {
+                                "apiKey": os.environ["DEEPSEEK_API_KEY"],
+                                "baseURL": "https://api.deepseek.com/v1",
+                            },
+                        }
+                    }
+                }
+                (Path(isolated_directory) / "opencode.json").write_text(
+                    json.dumps(temp_config, ensure_ascii=False)
+                )
+
                 command = [
                     settings.OPENCODE_BINARY,
                     "run",
@@ -127,7 +149,7 @@ class ImportRuleAdvisor:
                     "--dir",
                     isolated_directory,
                     "--model",
-                    settings.IMPORT_RULE_MODEL,
+                    model_ref,
                     "--format",
                     "json",
                     prompt,
@@ -151,7 +173,7 @@ class ImportRuleAdvisor:
                 input_content={
                     "command": command[:-1],
                     "prompt": prompt,
-                    "model": settings.IMPORT_RULE_MODEL,
+                    "model": model_ref,
                 },
                 error={
                     "type": type(error).__name__,
@@ -169,7 +191,7 @@ class ImportRuleAdvisor:
                 input_content={
                     "command": command[:-1],
                     "prompt": prompt,
-                    "model": settings.IMPORT_RULE_MODEL,
+                    "model": model_ref,
                 },
                 output_content={
                     "rawOutput": _redact(error.stdout or ""),
@@ -187,11 +209,11 @@ class ImportRuleAdvisor:
             "model_call",
             status="SUCCESS" if result.returncode == 0 else "FAILED",
             operation="opencode.run",
-            input_content={
-                "command": command[:-1],
-                "prompt": prompt,
-                "model": settings.IMPORT_RULE_MODEL,
-            },
+                input_content={
+                    "command": command[:-1],
+                    "prompt": prompt,
+                    "model": model_ref,
+                },
             output_content={
                 "returnCode": result.returncode,
                 "rawOutput": result.stdout,
@@ -223,7 +245,8 @@ class ImportRuleAdvisor:
         return (
             "你只负责修改达人表格的结构化转换规则，不得调用任何工具，不得生成代码，"
             "不得猜测样本中不存在的数据。达人 ID 必须原样保留；销量、订单数绝不能映射"
-            "为销售额。只输出一个符合 JSON Schema 的 JSON 对象，不要 Markdown，"
+            "为销售额。邮箱列映射后，column_transforms 中对应列必须设为 extract_email。"
+            "只输出一个符合 JSON Schema 的 JSON 对象，不要 Markdown，"
             "不要解释。\n\n"
             f"用户修改要求：{instruction}\n\n"
             f"当前规则：{json.dumps(current_rule, ensure_ascii=False)}\n\n"

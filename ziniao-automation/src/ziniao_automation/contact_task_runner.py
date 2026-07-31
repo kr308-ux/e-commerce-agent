@@ -324,6 +324,10 @@ def main(argv: list[str] | None = None) -> int:
         "sessionID": session_id,
         "errorCode": error_code,
         "errorMessage": error_message,
+        "skipCreator": state.skip_creator,
+        "reviewRequired": state.review_required,
+        "taskFatal": state.task_fatal,
+        "failureStage": state.failure_stage,
     }
     print(
         json.dumps(

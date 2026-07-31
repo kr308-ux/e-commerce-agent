@@ -252,7 +252,7 @@
         checkbox.checked = selectedIds.has(checkbox.value);
         checkbox.setAttribute(
           "aria-label",
-          `选择 ${String(valueFrom(candidate, "nickname", "creatorHandle") ?? "达人")}`
+          `选择 ${String(valueFrom(candidate, "nickname", "creatorId") ?? "达人")}`
         );
         checkbox.addEventListener("change", () => {
           if (checkbox.checked) selectedIds.add(checkbox.value);
@@ -271,19 +271,19 @@
         );
 
         const creatorCell = document.createElement("td");
-        const handle = String(
-          valueFrom(
-            candidate,
-            "creator_handle",
-            "creatorHandle",
-            "normalized_handle",
-            "handle"
-          ) ?? ""
+        const creatorId = String(
+          valueFrom(candidate, "creator_id", "creatorId", "creatorHandle") ?? ""
         ).replace(/^@/, "");
-        const nickname = String(valueFrom(candidate, "nickname", "display_name") ?? handle);
+        const nickname = String(
+          valueFrom(candidate, "nickname", "display_name") ?? creatorId
+        );
         creatorCell.append(
           textNode("strong", nickname),
-          textNode("small", handle ? `@${handle}` : "—", "block-muted")
+          textNode(
+            "small",
+            creatorId ? `达人 ID：${creatorId}` : "达人 ID：—",
+            "block-muted"
+          )
         );
 
         const revenue7Cell = textNode(

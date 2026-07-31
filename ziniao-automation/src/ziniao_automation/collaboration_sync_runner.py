@@ -7,7 +7,7 @@ import json
 from typing import Any
 
 from .actions.collaboration_sync import TargetCollaborationSync
-from .client import ZiniaoClient
+from .browser_connection import connect_reusable_store
 from .config import ZiniaoSettings
 from .errors import (
     ZiniaoApiError,
@@ -17,8 +17,6 @@ from .errors import (
     ZiniaoStoreSelectionError,
     ZiniaoWorkflowError,
 )
-from .process import ZiniaoProcessManager
-from .session import SeleniumStoreSession
 
 
 def _result(
@@ -51,25 +49,15 @@ def sync_store(store_id: str) -> dict[str, Any]:
 
     try:
         settings = ZiniaoSettings.from_env()
-        ZiniaoProcessManager(settings).ensure_started()
-        client = ZiniaoClient(settings)
-        client.update_core()
-        matches = [
-            store
-            for store in client.list_stores()
-            if store.browser_id == normalized_store_id
-        ]
-        if len(matches) != 1:
-            raise ZiniaoStoreSelectionError(
-                "未找到唯一匹配的已授权店铺。"
-            )
-        store = matches[0]
-        if store.is_expired:
-            raise ZiniaoStoreSelectionError("目标店铺授权已过期。")
-        with SeleniumStoreSession(client, settings, store) as session:
+        with connect_reusable_store(
+            settings,
+            normalized_store_id,
+            allow_start=False,
+        ) as connection:
+            session = connection.session
             if session.driver is None:
                 raise ZiniaoConnectionError(
-                    "店铺已启动但 Selenium 驱动未连接。"
+                    "已打开的店铺浏览器存在，但 Selenium 驱动未连接。"
                 )
             options = TargetCollaborationSync(session.driver).sync()
         return _result(
@@ -91,8 +79,23 @@ def sync_store(store_id: str) -> dict[str, Any]:
             error_code="STORE_SELECTION_ERROR",
             error_message=str(error),
         )
+    except ZiniaoConnectionError as error:
+        message = str(error)
+        browser_busy = (
+            "目标店铺正由另一个自动化进程操作" in message
+            or "等待浏览器控制权超时" in message
+        )
+        return _result(
+            success=False,
+            store_id=normalized_store_id,
+            error_code=(
+                "BROWSER_BUSY"
+                if browser_busy
+                else "CONNECTION_ERROR"
+            ),
+            error_message=message,
+        )
     except (
-        ZiniaoConnectionError,
         ZiniaoApiError,
         ZiniaoDriverError,
     ) as error:

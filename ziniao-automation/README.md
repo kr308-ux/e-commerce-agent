@@ -156,15 +156,25 @@ PYTHONPATH=ziniao-automation/src .venv/bin/python -m ziniao_automation \
 完整时才把任务目标标记为最终成功，但不改变邀请阶段已经写入的去重记录。
 
 生产联系任务由确定性状态机按固定顺序调用 `ziniao-contact` MCP，正常步骤不调用
-大模型。查找达人前会尝试关闭页面遮挡按钮，并使用导入达人 ID 原文搜索（不添加
-`@`）。只有固定定位器因 DOM 变化而失败时，才会把裁剪后的可交互 DOM（不含截图）
-交给 DeepSeek V4 Pro；返回定位器必须在本地通过唯一、可见、可用校验。
+大模型。可恢复步骤第一次失败后恢复上一成功检查点并确定性重试当前步骤一次；
+第二次仍失败才进入模型阶段。查找达人前会尝试关闭页面遮挡按钮，并使用导入达人 ID
+原文搜索（不添加 `@`）。模型阶段先从 CDP Accessibility Tree 经本地规则筛出
+少量候选；AX 无法安全确认时再用裁剪后的可交互 DOM（不含截图）补充。DeepSeek V4 Pro
+只能返回当前快照中的 `candidateId`，不能生成 CSS、XPath 或 JavaScript；定位器由
+本地生成并通过唯一、可见、可用校验。元素实际点击成功后，定位器写入
+`ZINIAO_ADAPTIVE_LOCATOR_PATH`（默认
+`temporary/ziniao-adaptive-locators.sqlite3`）。同一页面目标最多保留 3 条，
+按成功率、最近成功时间和稳定性排序，结构匹配失败时自动尝试下一条，连续 3 次失败
+的条目停用。固定定位器和已学习定位器在同一个完整等待窗口内联合轮询，每轮仍优先
+固定定位器；页面渲染期间的临时 miss 不扣分，只有完整等待超时后，才对本轮实际
+尝试过的每条缓存定位器各记录一次结构失败，然后进入 AX/DOM 候选自愈。
 
 运行日志按 `Asia/Shanghai` 日期写入 `logs/YYYY-MM-DD/`。确定性流程及每个 MCP
 操作的完整输入、输出写入 `regular/`，OpenCode 与 DeepSeek 的提示词、DOM 输入、
 原始响应、耗时和错误写入 `model/`；密码、Cookie、Authorization 和 API Key
 统一脱敏。常规点击前随机等待 1–2 秒，最终确认邀请按钮点击前固定等待 3 秒，
-页面刷新前仍随机等待 5–8 秒。
+普通页面刷新前随机等待 5–8 秒。第 8 步已打开定向合作但缺少“发送其他邀请开展合作”
+时固定等待 3 秒，只允许刷新一次；刷新后仍失败才进入 AX/DOM 模型兜底。
 
 下面的 OpenCode 脚本只保留给人工调试，并在验收完成后重新打开最终聊天页：
 
@@ -179,6 +189,39 @@ PYTHONPATH=ziniao-automation/src .venv/bin/python -m ziniao_automation \
 MCP，不进入命令参数、源码或 OpenCode 提示词。按 Ctrl+C 会安全关闭持续调试会话。
 Agent 同样默认停在第 5 步；远端发送必须指定 `--through-step`、任务招呼语和对应
 的显式确认参数。若调用方已有预期聊天 `creator_id`，可以额外传入进行强断言。
+
+## AXTree 覆盖验证
+
+独立诊断脚本会依次采集店铺首页、查找达人、达人详情、聊天标签页和邀请弹窗，
+比较主 frame 与子 frame 的 Chrome AXTree 和可见交互 DOM，并生成页面级及汇总
+JSON 报告。脚本会打开私信抽屉、定向合作页签和邀请弹窗，但不会输入招呼语，
+也不会点击发送或最终“邀请”按钮。
+
+```bash
+PYTHONPATH=ziniao-automation/src .venv/bin/python \
+  -m ziniao_automation.scripts.verify_ax_tree_coverage \
+  --store-id '<精确店铺ID>' \
+  --pages store_home,find_creators,creator_detail,chat_tab,invitation_modal \
+  --creator '@目标达人' \
+  --output reports/ax_coverage_full.json
+```
+
+查找达人页会分别保存初始、AI 搜索关闭后、候选项出现后和搜索结果出现后的快照，
+因此瞬时出现的 T-05 和 T-06 不会因后续页面重绘而被误报。若要精确验证已发送
+消息气泡 T-15，可额外传入 `--message '<完整招呼语>'`；不传时该目标记为
+`not_testable`，不计入 AX 命中率分母。
+
+已经手动打开目标状态时可使用 `--skip-navigation`。该选项只适合采集当前页面，
+通常应与单个 `--pages` 值配合使用：
+
+```bash
+PYTHONPATH=ziniao-automation/src .venv/bin/python \
+  -m ziniao_automation.scripts.verify_ax_tree_coverage \
+  --store-id '<精确店铺ID>' \
+  --pages invitation_modal \
+  --skip-navigation \
+  --output reports/ax_coverage_modal.json
+```
 
 ## MCP 工具与服务端调用
 
@@ -208,6 +251,9 @@ PYTHONPATH=ziniao-automation/src .venv/bin/python \
 成功输出顶层 `{success, storeId, options, errorCode, errorMessage}`；`options` 只包含
 从联盟“定向合作”页读取并验收的进行中选项。该入口不交互提示凭据，生产 Worker 必须
 通过环境变量提供 `ZINIAO_COMPANY`、`ZINIAO_USERNAME` 和 `ZINIAO_PASSWORD`。
+同步入口只附加跨进程缓存中的现有店铺浏览器，不会在缓存缺失时重新调用
+`startBrowser`；若当前只有已登录店铺首页，会在同一浏览器临时标签中进入联盟，
+同步后关闭临时标签并恢复原活动标签页。
 
 ## 作为 Python 模块使用
 

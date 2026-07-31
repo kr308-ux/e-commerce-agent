@@ -292,12 +292,13 @@ def candidate_payload(
         "total_revenue",
         None,
     )
-    creator_id = normalize_creator_handle(creator.creator_id)
     return {
         "id": creator.pk,
         "rank": rank,
-        "handle": f"@{creator_id}",
-        "creatorHandle": creator_id,
+        "creatorId": str(creator.creator_id or "").strip().lstrip("@"),
+        # Keep the previous key during static-asset rollouts so an already
+        # opened dashboard does not render the ID as missing.
+        "creatorHandle": str(creator.creator_id or "").strip().lstrip("@"),
         "nickname": creator.nickname,
         "recent7DayRevenue": (
             None if revenue_7_day is None else str(revenue_7_day)

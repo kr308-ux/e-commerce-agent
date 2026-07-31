@@ -763,6 +763,16 @@ button {
   place-items: center;
 }
 
+.avatar svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
 .profile-copy {
   min-width: 0;
 }
@@ -2813,6 +2823,11 @@ tbody tr:hover {
   background: #fff3dc;
 }
 
+.overview-icon-red {
+  color: var(--red);
+  background: var(--red-pale);
+}
+
 .overview-label {
   color: var(--ink-soft);
   font-size: 13px;
@@ -2844,6 +2859,10 @@ tbody tr:hover {
 
 .overview-card-waiting {
   background: linear-gradient(145deg, #fff, #fffaf0);
+}
+
+.overview-card-failed {
+  background: linear-gradient(145deg, #fff, #fff7f5);
 }
 
 .last-update {
@@ -3169,6 +3188,323 @@ tbody tr:hover {
   color: var(--ink-muted);
   font-size: 17px;
   font-style: normal;
+}
+
+.business-explained {
+  position: relative;
+}
+
+.business-explained::before {
+  position: absolute;
+  z-index: 20;
+  top: 12px;
+  right: 12px;
+  left: 12px;
+  padding: 11px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  color: #f3f7f4;
+  background: rgba(17, 30, 23, 0.96);
+  box-shadow: 0 12px 28px rgba(11, 20, 15, 0.22);
+  content: attr(data-business-tip);
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 1.55;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.business-explained:hover::before,
+.business-explained:focus-visible::before {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.business-explained:focus-visible {
+  outline: 2px solid rgba(75, 211, 138, 0.55);
+  outline-offset: 2px;
+}
+
+/* Workbench outreach records */
+
+.outreach-records-section {
+  margin: 36px 0 42px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(23, 33, 27, 0.045);
+}
+
+.outreach-records-section.is-loading {
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+.outreach-records-heading {
+  margin-bottom: 18px;
+}
+
+.outreach-records-heading p {
+  margin: 7px 0 0;
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+
+.record-total {
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--green);
+  background: var(--green-pale);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.record-tabs {
+  display: flex;
+  margin: 0 -24px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--line);
+  gap: 22px;
+}
+
+.record-tab {
+  position: relative;
+  padding: 11px 2px 13px;
+  color: var(--ink-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.record-tab::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--green);
+  content: "";
+  opacity: 0;
+}
+
+.record-tab:hover,
+.record-tab:focus-visible,
+.record-tab.is-active {
+  color: var(--green);
+  outline: none;
+}
+
+.record-tab.is-active::after {
+  opacity: 1;
+}
+
+.record-subtabs {
+  display: flex;
+  margin: 16px 0;
+  gap: 8px;
+}
+
+.record-subtabs a {
+  padding: 7px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink-muted);
+  background: #fafbfa;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.record-subtabs a:hover,
+.record-subtabs a:focus-visible,
+.record-subtabs a.is-active {
+  border-color: #9fc4ae;
+  color: var(--green);
+  background: var(--green-pale);
+  outline: none;
+}
+
+.record-filter-form {
+  display: grid;
+  margin: 18px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fafbfa;
+  grid-template-columns: minmax(190px, 1.35fr) repeat(4, minmax(145px, 1fr)) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.record-filter-form label {
+  min-width: 0;
+}
+
+.record-filter-form label > span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.record-filter-form input,
+.record-filter-form select {
+  width: 100%;
+  height: 38px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: white;
+  font-size: 11px;
+}
+
+.record-filter-actions {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 10px;
+}
+
+.record-filter-actions .create-button {
+  min-height: 38px;
+  padding: 0 16px;
+}
+
+.record-filter-actions a {
+  color: var(--ink-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.record-filter-actions a:hover,
+.record-filter-actions a:focus-visible {
+  color: var(--green);
+  outline: none;
+}
+
+.record-filter-errors {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  color: var(--red);
+  background: var(--red-pale);
+  font-size: 11px;
+}
+
+.record-filter-errors p {
+  margin: 0;
+}
+
+.record-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.record-table {
+  width: 100%;
+  min-width: 820px;
+  border-collapse: collapse;
+}
+
+.record-table-failed {
+  min-width: 1050px;
+}
+
+.record-table th,
+.record-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: middle;
+  font-size: 11px;
+}
+
+.record-table th {
+  color: var(--ink-muted);
+  background: #f7f9f7;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+}
+
+.record-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.record-table td > strong,
+.record-table td > small {
+  display: block;
+}
+
+.record-table td > strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.record-table td > small {
+  margin-top: 4px;
+  color: var(--ink-muted);
+  font-size: 10px;
+}
+
+.record-error-message {
+  display: inline-block;
+  max-width: 340px;
+  color: var(--red);
+  line-height: 1.45;
+}
+
+.status-no-email,
+.status-not-sent {
+  color: var(--ink-muted);
+  background: #edf0ee;
+}
+
+.status-no-email i,
+.status-not-sent i {
+  background: #8c9991;
+}
+
+.record-pagination {
+  display: grid;
+  margin-top: 16px;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 16px;
+}
+
+.record-pagination a,
+.record-pagination > span {
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.record-pagination a:last-child,
+.record-pagination > span:last-child {
+  text-align: right;
+}
+
+.record-pagination a:hover,
+.record-pagination a:focus-visible {
+  color: var(--green);
+  outline: none;
+}
+
+.record-pagination > span[aria-disabled="true"] {
+  opacity: 0.45;
+}
+
+.record-pagination strong {
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 650;
+  text-align: center;
 }
 
 /* Mailing queue */
@@ -3776,6 +4112,72 @@ tbody tr:hover {
   gap: 18px 12px;
 }
 
+.mail-form-errors {
+  grid-column: 1 / -1;
+  padding: 11px 13px;
+  border-radius: 9px;
+  color: var(--red);
+  background: var(--red-pale);
+  font-size: 12px;
+}
+
+.mail-business-rules {
+  display: grid;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mail-business-rules legend {
+  width: 100%;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mail-business-rule {
+  display: flex;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  background: #fbfcfb;
+  cursor: pointer;
+  gap: 10px;
+}
+
+.mail-business-rule.is-active {
+  border-color: #7cb895;
+  box-shadow: 0 0 0 3px rgba(34, 107, 74, 0.08);
+  background: var(--green-pale);
+}
+
+.mail-business-rule input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--green);
+}
+
+.mail-business-rule strong,
+.mail-business-rule small {
+  display: block;
+}
+
+.mail-business-rule strong {
+  font-size: 12px;
+}
+
+.mail-business-rule small {
+  margin-top: 4px;
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .mail-field label {
   display: flex;
   margin-bottom: 8px;
@@ -3850,6 +4252,101 @@ tbody tr:hover {
   font-size: 11px;
 }
 
+.mail-candidate-picker {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: #fafbfa;
+  grid-column: 1 / -1;
+}
+
+.mail-candidate-heading {
+  display: flex;
+  margin-bottom: 12px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.mail-candidate-heading strong,
+.mail-candidate-heading small {
+  display: block;
+}
+
+.mail-candidate-heading strong {
+  font-size: 12px;
+}
+
+.mail-candidate-heading small {
+  margin-top: 4px;
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+
+.mail-candidate-heading b {
+  color: var(--green);
+}
+
+.mail-select-all {
+  min-width: 76px;
+}
+
+.mail-candidate-table-wrap {
+  max-height: 340px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.mail-candidate-table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+}
+
+.mail-candidate-table th,
+.mail-candidate-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  font-size: 11px;
+}
+
+.mail-candidate-table th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  color: var(--ink-muted);
+  background: #f5f7f5;
+  font-weight: 700;
+}
+
+.mail-candidate-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.mail-candidate-table td strong {
+  font-size: 12px;
+}
+
+.mail-candidate-table .mail-select-column {
+  width: 54px;
+  text-align: center;
+}
+
+.mail-candidate-table input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--green);
+}
+
+.mail-candidate-note {
+  margin: 9px 0 0;
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+
 .mail-form-footer {
   display: flex;
   grid-column: 1 / -1;
@@ -3920,6 +4417,68 @@ tbody tr:hover {
   line-height: 1.5;
 }
 
+.mail-retry-summary {
+  display: flex;
+  margin-bottom: 18px;
+  padding: 17px 20px;
+  border: 1px solid #efc9bc;
+  border-radius: 13px;
+  background: linear-gradient(135deg, #fff9f6, #fff);
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.mail-retry-summary strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 14px;
+}
+
+.mail-retry-summary p {
+  margin: 5px 0 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.mail-retry-summary form {
+  flex: 0 0 auto;
+}
+
+.mail-attempt-history {
+  position: relative;
+  margin-top: 7px;
+}
+
+.mail-attempt-history summary {
+  color: var(--green);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.mail-attempt-history ol {
+  min-width: 270px;
+  margin: 7px 0 0;
+  padding: 9px 11px 9px 26px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafbfa;
+}
+
+.mail-attempt-history li {
+  margin: 4px 0;
+  color: var(--ink-soft);
+  font-size: 10px;
+}
+
+.mail-attempt-history li small {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink-muted);
+}
+
 .mail-delivery-panel {
   margin-bottom: 18px;
 }
@@ -3971,6 +4530,15 @@ tbody tr:hover {
   background: #edf0ee;
 }
 
+.status-retry_waiting {
+  color: #a45d16;
+  background: #fff0dd;
+}
+
+.status-retry_waiting i {
+  background: #d68a32;
+}
+
 @media (max-width: 1180px) {
   .creator-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3982,6 +4550,10 @@ tbody tr:hover {
 
   .mail-template-workspace {
     grid-template-columns: 1fr;
+  }
+
+  .record-filter-form {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
@@ -4054,11 +4626,50 @@ tbody tr:hover {
     padding: 16px;
   }
 
+  .outreach-records-section {
+    margin-top: 28px;
+    padding: 18px;
+  }
+
+  .record-tabs {
+    margin: 0 -18px;
+    padding: 0 18px;
+  }
+
+  .record-filter-form {
+    grid-template-columns: 1fr;
+  }
+
+  .record-filter-actions {
+    justify-content: space-between;
+  }
+
+  .record-pagination {
+    gap: 8px;
+  }
+
+  .record-pagination strong {
+    max-width: 120px;
+  }
+
   .service-status {
     width: 100%;
   }
 
+  .mail-retry-summary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .mail-retry-summary .create-button {
+    width: 100%;
+  }
+
   .mail-queue-form {
+    grid-template-columns: 1fr;
+  }
+
+  .mail-business-rules {
     grid-template-columns: 1fr;
   }
 

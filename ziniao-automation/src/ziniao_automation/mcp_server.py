@@ -19,7 +19,7 @@ from .browser_connection import (
     connect_reusable_store,
 )
 from .config import ZiniaoSettings
-from .dom_fallback import DeepSeekDomFallback
+from .dom_fallback import DeepSeekDomFallback, is_dom_failure_message
 from .errors import (
     ZiniaoError,
     ZiniaoWorkflowError,
@@ -43,6 +43,29 @@ TOOL_ORDER = (
     "ziniao_select_invitation",
     "ziniao_send_selected_invitation",
     "ziniao_disconnect",
+)
+RECOVERABLE_STEP_TOOLS = {
+    "ziniao_open_find_creators",
+    "ziniao_search_creator",
+    "ziniao_open_creator_detail",
+    "ziniao_open_message_panel",
+    "ziniao_open_chat_new_tab",
+    "ziniao_verify_chat_recipient",
+    "ziniao_open_target_collaboration",
+    "ziniao_open_other_invitation_dialog",
+    "ziniao_select_invitation",
+}
+WRITE_STEP_TOOLS = {
+    "ziniao_send_greeting",
+    "ziniao_send_selected_invitation",
+}
+NON_RETRYABLE_MESSAGE_MARKERS = (
+    "与目标达人不一致",
+    "不得更换",
+    "与任务固定店铺不一致",
+    "哈希不一致",
+    "必须显式确认",
+    "invitationGroupId 与任务目标不一致",
 )
 
 
@@ -397,6 +420,10 @@ class ContactAutomationState:
         self.terminal_failure: dict[str, Any] | None = None
         self.failed_tool_name: str | None = None
         self.should_exit = False
+        self.skip_creator = False
+        self.review_required = False
+        self.task_fatal = False
+        self.failure_stage = ""
         self.task_id = ""
         self.session_id = (
             os.getenv("ZINIAO_RUN_SESSION_ID", "").strip()
@@ -466,6 +493,61 @@ class ContactAutomationState:
                 if sensitive:
                     message = message.replace(sensitive, "[REDACTED]")
         return message
+
+    @staticmethod
+    def _step_error_recoverable(
+        tool_name: str,
+        error: Exception,
+    ) -> bool:
+        if tool_name not in RECOVERABLE_STEP_TOOLS:
+            return False
+        message = str(error)
+        if any(marker in message for marker in NON_RETRYABLE_MESSAGE_MARKERS):
+            return False
+        return (
+            isinstance(error, ZiniaoError)
+            and is_dom_failure_message(message)
+        ) or type(error).__name__ in {
+            "StaleElementReferenceException",
+            "TimeoutException",
+            "ElementClickInterceptedException",
+            "NoSuchWindowException",
+        }
+
+    def _log_attempt(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        stage: str,
+        status: str,
+        error: Exception | None = None,
+        recovery: dict[str, Any] | None = None,
+    ) -> None:
+        self.audit_logger.write(
+            "operation_attempt",
+            status=status,
+            task_id=self.task_id,
+            session_id=self.session_id,
+            operation=tool_name,
+            input_content=arguments,
+            output_content={
+                "stage": stage,
+                "recovery": recovery or {},
+            },
+            error=(
+                {
+                    "type": type(error).__name__,
+                    "message": self._safe_message(error),
+                }
+                if error is not None
+                else None
+            ),
+            metadata={
+                "stateMachineStage": stage,
+                "browser": self._browser_context(),
+            },
+        )
 
     def _select_store(
         self,
@@ -653,48 +735,129 @@ class ContactAutomationState:
                 ),
                 "ziniao_disconnect": self._disconnect,
             }
-            data = handlers[tool_name]()
-            if self.workflow is not None:
-                fallback_events = (
-                    self.workflow.consume_dom_fallback_events()
-                )
-                evidence = (
-                    data.get("evidence")
-                    if isinstance(data, dict)
-                    else None
-                )
-                if fallback_events and isinstance(evidence, dict):
-                    evidence["domFallbackUsed"] = True
-                    evidence["domFallbackEvents"] = fallback_events
-            result = _success(data)
-            self.completed[tool_name] = result
-            return self._logged_result(
-                tool_name=tool_name,
-                arguments=arguments,
-                result=result,
-                started_at=started_at,
+            handler = handlers[tool_name]
+            stages = (
+                ("deterministic-1", False),
+                ("deterministic-2", False),
+                ("model-fallback", True),
             )
-        except ZiniaoError as error:
+            last_error: Exception | None = None
+            used_stages: list[str] = []
+            for stage_index, (stage, model_enabled) in enumerate(stages):
+                if stage_index > 0:
+                    if (
+                        last_error is None
+                        or not self._step_error_recoverable(
+                            tool_name,
+                            last_error,
+                        )
+                        or self.workflow is None
+                    ):
+                        break
+                    try:
+                        recovery = self.workflow.recover_for_retry(
+                            tool_name
+                        )
+                        self._log_attempt(
+                            tool_name=tool_name,
+                            arguments=arguments,
+                            stage=f"recovery-before-{stage}",
+                            status="SUCCESS",
+                            recovery=recovery,
+                        )
+                    except Exception as recovery_error:
+                        last_error = recovery_error
+                        self._log_attempt(
+                            tool_name=tool_name,
+                            arguments=arguments,
+                            stage=f"recovery-before-{stage}",
+                            status="FAILED",
+                            error=recovery_error,
+                        )
+                        break
+                if self.workflow is not None:
+                    self.workflow.set_model_fallback_enabled(
+                        model_enabled
+                    )
+                used_stages.append(stage)
+                try:
+                    data = handler()
+                except Exception as attempt_error:
+                    last_error = attempt_error
+                    self._log_attempt(
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        stage=stage,
+                        status="FAILED",
+                        error=attempt_error,
+                    )
+                    continue
+                self._log_attempt(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    stage=stage,
+                    status="SUCCESS",
+                )
+                if self.workflow is not None:
+                    fallback_events = (
+                        self.workflow.consume_dom_fallback_events()
+                    )
+                    evidence = (
+                        data.get("evidence")
+                        if isinstance(data, dict)
+                        else None
+                    )
+                    if isinstance(evidence, dict):
+                        evidence["stateMachineStages"] = used_stages
+                        evidence["modelFallbackStageUsed"] = (
+                            model_enabled
+                        )
+                        if fallback_events:
+                            evidence["adaptiveLocatorUsed"] = True
+                            evidence["adaptiveLocatorEvents"] = (
+                                fallback_events
+                            )
+                result = _success(data)
+                self.completed[tool_name] = result
+                return self._logged_result(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    result=result,
+                    started_at=started_at,
+                    source=stage,
+                )
+
+            assert last_error is not None
             diagnosis = (
                 self.workflow.diagnose_dom_failure(
                     step_name=tool_name,
-                    error_message=self._safe_message(error),
+                    error_message=self._safe_message(last_error),
                 )
                 if self.workflow is not None
                 else {}
             )
             failure = _failure(
-                type(error).__name__,
-                self._safe_message(error),
+                (
+                    type(last_error).__name__
+                    if isinstance(last_error, ZiniaoError)
+                    else "UNEXPECTED_ERROR"
+                ),
+                self._safe_message(last_error),
             )
+            failure["error"]["stateMachineStages"] = used_stages
+            failure["error"]["adaptiveLocatorOrder"] = [
+                "persisted_recipe",
+                "accessibility_tree",
+                "dom_candidates",
+            ]
             if diagnosis:
-                failure["error"]["domFallback"] = diagnosis
+                failure["error"]["modelDiagnosis"] = diagnosis
             if self.workflow is not None:
                 fallback_events = (
                     self.workflow.consume_dom_fallback_events()
                 )
                 if fallback_events:
-                    failure["error"]["domFallbackEvents"] = (
+                    failure["error"]["adaptiveLocatorEvents"] = (
                         fallback_events
                     )
             return self._logged_result(
@@ -705,6 +868,11 @@ class ContactAutomationState:
                     failure,
                 ),
                 started_at=started_at,
+                source=(
+                    used_stages[-1]
+                    if used_stages
+                    else "rejected"
+                ),
             )
         except Exception as error:
             return self._logged_result(
@@ -713,7 +881,11 @@ class ContactAutomationState:
                 result=self._terminate_after_failure(
                     tool_name,
                     _failure(
-                        "UNEXPECTED_ERROR",
+                        (
+                            type(error).__name__
+                            if isinstance(error, ZiniaoError)
+                            else "UNEXPECTED_ERROR"
+                        ),
                         self._safe_message(error),
                     ),
                 ),
@@ -728,6 +900,27 @@ class ContactAutomationState:
         self.terminal_failure = failure
         self.failed_tool_name = tool_name
         self.should_exit = True
+        self.review_required = (
+            "ziniao_send_greeting" in self.completed
+            or tool_name in WRITE_STEP_TOOLS
+        )
+        self.task_fatal = tool_name == "ziniao_connect"
+        self.skip_creator = (
+            not self.review_required and not self.task_fatal
+        )
+        self.failure_stage = (
+            "TASK_FATAL"
+            if self.task_fatal
+            else (
+                "REVIEW_REQUIRED"
+                if self.review_required
+                else "SKIPPED"
+            )
+        )
+        failure["reviewRequired"] = self.review_required
+        failure["skipCreator"] = self.skip_creator
+        failure["taskFatal"] = self.task_fatal
+        failure["failureStage"] = self.failure_stage
         try:
             self.close()
         except Exception:

@@ -127,9 +127,16 @@ class BrowserSessionCache:
         directory: Path,
         *,
         probe_timeout_seconds: float = 2.0,
+        live_probe_attempts: int = 3,
+        live_probe_retry_seconds: float = 0.15,
     ):
         self.directory = directory
         self.probe_timeout_seconds = probe_timeout_seconds
+        self.live_probe_attempts = max(1, int(live_probe_attempts))
+        self.live_probe_retry_seconds = max(
+            0.0,
+            float(live_probe_retry_seconds),
+        )
 
     def _entry_path(self, store_id: str) -> Path:
         return self.directory / f"{_store_key(store_id)}.json"
@@ -215,7 +222,16 @@ class BrowserSessionCache:
         entry = self.load(store_id)
         if entry is None:
             return None
-        endpoint = self.probe(entry.debugging_port)
+        endpoint = None
+        for attempt in range(self.live_probe_attempts):
+            endpoint = self.probe(entry.debugging_port)
+            if endpoint is not None:
+                break
+            if (
+                attempt + 1 < self.live_probe_attempts
+                and self.live_probe_retry_seconds
+            ):
+                time.sleep(self.live_probe_retry_seconds)
         if (
             endpoint is None
             or endpoint.browser_id != entry.devtools_browser_id

@@ -1,0 +1,268 @@
+<section
+    class="outreach-records-section"
+    id="outreach-records"
+    aria-labelledby="outreach-records-title"
+    data-outreach-records
+    data-fragment-url="{% url 'tasks:outreach-records' %}"
+>
+    <div class="section-title-row outreach-records-heading">
+        <div>
+            <span class="section-kicker">OUTREACH RECORDS</span>
+            <h2 id="outreach-records-title">触达记录</h2>
+            <p>联系结果与邮件投递统一查询，每次仅加载当前页 {{ page_size }} 条记录。</p>
+        </div>
+        <span class="record-total">{{ page_obj.paginator.count }} 条记录</span>
+    </div>
+
+    <nav class="record-tabs" aria-label="触达记录类型">
+        <a
+            class="record-tab {% if record_type == 'contact' %}is-active{% endif %}"
+            href="{{ contact_success_url }}"
+            data-record-navigation
+            {% if record_type == 'contact' %}aria-current="page"{% endif %}
+        >
+            达人联系
+        </a>
+        <a
+            class="record-tab {% if record_type == 'email' %}is-active{% endif %}"
+            href="{{ email_records_url }}"
+            data-record-navigation
+            {% if record_type == 'email' %}aria-current="page"{% endif %}
+        >
+            邮件发送
+        </a>
+    </nav>
+
+    {% if record_type == "contact" %}
+    <nav class="record-subtabs" aria-label="达人联系结果">
+        <a
+            class="{% if contact_result == 'success' %}is-active{% endif %}"
+            href="{{ contact_success_url }}"
+            data-record-navigation
+        >联系成功</a>
+        <a
+            class="{% if contact_result == 'failed' %}is-active{% endif %}"
+            href="{{ contact_failed_url }}"
+            data-record-navigation
+        >联系失败</a>
+    </nav>
+    {% endif %}
+
+    <form
+        class="record-filter-form"
+        method="get"
+        action="{% url 'tasks:dashboard' %}"
+        data-record-filter-form
+    >
+        <input type="hidden" name="record_type" value="{{ record_type }}">
+        {% if record_type == "contact" %}
+        <input type="hidden" name="contact_result" value="{{ contact_result }}">
+        {% endif %}
+        <label class="record-filter-search">
+            <span>达人搜索</span>
+            <input
+                type="search"
+                name="creator_id"
+                value="{{ creator_search }}"
+                placeholder="达人 ID、名称或邮箱"
+                autocomplete="off"
+            >
+        </label>
+        <label>
+            <span>导入批次</span>
+            <select name="import_task">
+                <option value="">全部批次</option>
+                {% for batch in import_batches %}
+                <option
+                    value="{{ batch.id }}"
+                    {% if batch.id|stringformat:"s" == selected_import_task_id %}selected{% endif %}
+                >
+                    {{ batch.created_at|date:"Y-m-d" }} · {{ batch.file_name }}
+                </option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>
+            <span>{% if record_type == "email" %}发送开始日期{% else %}联系开始日期{% endif %}</span>
+            <input type="date" name="date_from" value="{{ date_from }}">
+        </label>
+        <label>
+            <span>{% if record_type == "email" %}发送结束日期{% else %}联系结束日期{% endif %}</span>
+            <input type="date" name="date_to" value="{{ date_to }}">
+        </label>
+        {% if record_type == "email" %}
+        <label>
+            <span>发送状态</span>
+            <select name="email_status">
+                <option value="">全部状态</option>
+                {% for value, label in email_status_choices %}
+                <option value="{{ value }}" {% if value == email_status %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        {% endif %}
+        <div class="record-filter-actions">
+            <button class="create-button" type="submit">查询</button>
+            <a href="{{ clear_filters_url }}" data-record-navigation>清空</a>
+        </div>
+    </form>
+
+    {% if filter_errors %}
+    <div class="record-filter-errors" role="alert">
+        {% for error in filter_errors %}<p>{{ error }}</p>{% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="record-table-wrap" aria-live="polite">
+        {% if record_type == "email" %}
+        <table class="record-table">
+            <thead>
+                <tr>
+                    <th>达人 ID</th>
+                    <th>达人名称</th>
+                    <th>达人邮箱</th>
+                    <th>发送/尝试日期</th>
+                    <th>发送状态</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for record in page_obj %}
+                <tr data-record-row>
+                    <td><strong>{{ record.creator_id_snapshot|default:"—" }}</strong></td>
+                    <td>{{ record.creator_name_snapshot|default:"—" }}</td>
+                    <td>{{ record.recipient_email|default:"—" }}</td>
+                    <td>
+                        {% if record.activity_at %}
+                        <strong>{{ record.activity_at|date:"Y-m-d H:i" }}</strong>
+                        {% else %}
+                        <strong>—</strong>
+                        {% endif %}
+                        <small>
+                            {% if record.source_import_task %}
+                            {{ record.source_import_task.file_name }}
+                            {% else %}
+                            历史批次未知
+                            {% endif %}
+                        </small>
+                    </td>
+                    <td>
+                        <span class="status-pill status-{{ record.status|lower }}">
+                            <i></i>{{ record.get_status_display }}
+                        </span>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td class="empty-cell" colspan="5">没有符合条件的邮件记录。</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% elif contact_result == "failed" %}
+        <table class="record-table record-table-failed">
+            <thead>
+                <tr>
+                    <th>达人 ID</th>
+                    <th>达人名称</th>
+                    <th>联系日期</th>
+                    <th>失败步骤</th>
+                    <th>失败原因</th>
+                    <th>达人状态</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for record in page_obj %}
+                <tr data-record-row>
+                    <td><strong>{{ record.creator_handle_snapshot|default:"—" }}</strong></td>
+                    <td>{{ record.nickname_snapshot|default:record.creator_handle_snapshot }}</td>
+                    <td>
+                        <strong>{{ record.recorded_at|date:"Y-m-d H:i" }}</strong>
+                        <small>{{ record.task.source_import_task.file_name }}</small>
+                    </td>
+                    <td>{{ record.failed_step_label|default:record.current_step|default:"未记录" }}</td>
+                    <td>
+                        <span
+                            class="record-error-message"
+                            title="{{ record.error_message }}"
+                        >{{ record.error_message|default:"未记录失败原因"|truncatechars:60 }}</span>
+                    </td>
+                    <td>
+                        <span class="status-pill status-{{ record.status|lower }}">
+                            <i></i>{{ record.get_status_display }}
+                        </span>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td class="empty-cell" colspan="6">没有符合条件的联系失败记录。</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <table class="record-table">
+            <thead>
+                <tr>
+                    <th>达人 ID</th>
+                    <th>达人名称</th>
+                    <th>联系日期</th>
+                    <th>邮箱 / 邮件状态</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for record in page_obj %}
+                <tr data-record-row>
+                    <td><strong>{{ record.creator_handle|default:"—" }}</strong></td>
+                    <td>
+                        {% if record.creator %}
+                        {{ record.creator.nickname|default:record.creator_handle }}
+                        {% else %}
+                        {{ record.creator_handle }}
+                        {% endif %}
+                    </td>
+                    <td>
+                        <strong>{{ record.contacted_at|date:"Y-m-d H:i" }}</strong>
+                        <small>
+                            {% if record.contact_task %}
+                            {{ record.contact_task.source_import_task.file_name }}
+                            {% else %}
+                            历史批次未知
+                            {% endif %}
+                        </small>
+                    </td>
+                    <td>
+                        {% if record.creator and record.creator.email %}
+                        <strong>{{ record.creator.email }}</strong>
+                        <small>
+                            <span class="status-pill status-{{ record.email_state_code }}">
+                                <i></i>{{ record.email_state_label }}
+                            </span>
+                        </small>
+                        {% else %}
+                        <span class="status-pill status-no-email">
+                            <i></i>无邮箱
+                        </span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td class="empty-cell" colspan="4">没有符合条件的联系成功记录。</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+
+    <nav class="record-pagination" aria-label="触达记录分页">
+        {% if previous_page_url %}
+        <a href="{{ previous_page_url }}" data-record-navigation>← 上一页</a>
+        {% else %}
+        <span aria-disabled="true">← 上一页</span>
+        {% endif %}
+        <strong>
+            第 {{ page_obj.number }} / {{ page_obj.paginator.num_pages }} 页
+            · 每页 {{ page_size }} 条
+        </strong>
+        {% if next_page_url %}
+        <a href="{{ next_page_url }}" data-record-navigation>下一页 →</a>
+        {% else %}
+        <span aria-disabled="true">下一页 →</span>
+        {% endif %}
+    </nav>
+</section>

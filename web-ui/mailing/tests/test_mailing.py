@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import smtplib
+from datetime import timedelta
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -14,14 +17,17 @@ from django.urls import reverse
 from django.utils import timezone
 
 from tasks.models import Creator, ImportTask, ImportTaskCreator
+from creator_contact.models import CreatorContactTarget, CreatorContactTask
 
 from mailing.models import (
     EmailDelivery,
+    EmailDeliveryAttempt,
     EmailSendingService,
     EmailTemplateAsset,
     recipient_key_for,
 )
 from mailing.services.email_sender import build_creator_email
+from mailing.services.launcher import launch_email_sender
 from mailing.services.runtime import get_service_state
 from mailing.services.rich_text import sanitize_rich_html
 from mailing.services.template_content import (
@@ -193,11 +199,284 @@ class QueueCreatorEmailsCommandTests(MailingTestCase):
 
 
 class MailingDashboardTests(MailingTestCase):
+    def create_verified_card_target(
+        self,
+        creator: Creator,
+        *,
+        import_task: ImportTask | None = None,
+        card_sent: bool = True,
+        final_send_verified: bool = True,
+        status: str = CreatorContactTarget.Status.SUCCESS,
+    ) -> CreatorContactTarget:
+        task = CreatorContactTask.objects.create(
+            store_id="mailing-test-store",
+            source_import_task=import_task or self.import_task,
+            selection_method=CreatorContactTask.SelectionMethod.MANUAL,
+            top_n=1,
+            greeting_snapshot="Hello",
+            invitation_name_snapshot="Test collaboration",
+            invitation_id_snapshot="test-invitation",
+            confirm_send_card=True,
+        )
+        return CreatorContactTarget.objects.create(
+            task=task,
+            creator=creator,
+            rank=1,
+            creator_handle_snapshot=creator.creator_id,
+            nickname_snapshot=creator.nickname,
+            status=status,
+            card_sent=card_sent,
+            final_send_verified=final_send_verified,
+            finished_at=timezone.now(),
+        )
+
     def test_live_preview_allows_same_origin_blob_images(self) -> None:
         response = self.client.get(reverse("mailing:dashboard"))
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'sandbox="allow-same-origin"')
+
+    def test_dashboard_shows_business_rules_names_ids_and_select_all(self) -> None:
+        response = self.client.get(reverse("mailing:dashboard"))
+
+        self.assertContains(response, "合作卡片发送成功")
+        self.assertContains(response, "手动选择达人")
+        self.assertContains(response, "全选")
+        self.assertContains(response, "达人名称")
+        self.assertContains(response, "达人 ID")
+        self.assertNotContains(response, "按达人销售额从高到低选择")
+        self.assertNotContains(
+            response,
+            "允许重新入队未超过重试上限的失败邮件",
+        )
+        self.assertNotContains(
+            response,
+            "仅在确认失败邮件没有实际送达后使用",
+        )
+
+    def test_card_sent_rule_only_queues_fully_verified_targets(self) -> None:
+        verified = self.create_creator()
+        unverified = self.create_creator(
+            handle="NotVerified",
+            nickname="Not Verified",
+            email="not-verified@example.com",
+        )
+        self.create_verified_card_target(verified)
+        self.create_verified_card_target(
+            unverified,
+            final_send_verified=False,
+        )
+        other_import = ImportTask.objects.create(
+            file_name="other-batch.xlsx",
+            file_sha256="c" * 64,
+            sheet_name="Creators",
+            status=ImportTask.Status.SUCCESS,
+            snapshot_date=timezone.localdate(),
+            confirmed_at=timezone.now(),
+            finished_at=timezone.now(),
+        )
+        other_batch_creator = self.create_creator(
+            handle="OtherBatch",
+            nickname="Other Batch",
+            email="other-batch@example.com",
+            import_task=other_import,
+        )
+        self.create_verified_card_target(
+            other_batch_creator,
+            import_task=other_import,
+        )
+
+        response = self.client.post(
+            reverse("mailing:dashboard"),
+            {
+                "action": "queue",
+                "business_rule": "CARD_SENT",
+                "import_task": self.import_task.pk,
+                "limit": 10,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            list(
+                EmailDelivery.objects.values_list(
+                    "creator_id_snapshot",
+                    flat=True,
+                )
+            ),
+            ["creatorone"],
+        )
+
+    def test_manual_rule_queues_only_selected_creators(self) -> None:
+        selected = self.create_creator()
+        self.create_creator(
+            handle="NotSelected",
+            nickname="Not Selected",
+            email="not-selected@example.com",
+        )
+
+        with patch(
+            "mailing.views.launch_email_sender",
+            return_value=True,
+        ) as launcher:
+            response = self.client.post(
+                reverse("mailing:dashboard"),
+                {
+                    "action": "queue",
+                    "business_rule": "MANUAL",
+                    "import_task": self.import_task.pk,
+                    "limit": 100,
+                    "selected_creator_ids": [selected.pk],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        launcher.assert_called_once_with()
+        self.assertContains(response, "邮件发送服务已自动启动")
+        delivery = EmailDelivery.objects.get()
+        self.assertEqual(delivery.creator, selected)
+
+    def test_sender_launcher_starts_detached_process_for_pending_queue(
+        self,
+    ) -> None:
+        self.create_delivery()
+        with TemporaryDirectory() as directory, patch(
+            "mailing.services.launcher.email_sender_log_path",
+            return_value=Path(directory) / "email-sender.log",
+        ), patch(
+            "mailing.services.launcher.subprocess.Popen",
+        ) as popen, patch(
+            "mailing.services.launcher.connection",
+        ) as database_connection:
+            database_connection.settings_dict = {
+                "NAME": str(Path(directory) / "agent.db")
+            }
+            started = launch_email_sender()
+
+        self.assertTrue(started)
+        popen.assert_called_once()
+        command = popen.call_args.args[0]
+        self.assertEqual(command[-1], "send_creator_emails")
+        if os.name == "posix":
+            self.assertTrue(popen.call_args.kwargs["start_new_session"])
+
+    def test_dashboard_requeues_retryable_failed_delivery_by_default(
+        self,
+    ) -> None:
+        creator = self.create_creator()
+        delivery = self.create_delivery(
+            creator=creator,
+            status=EmailDelivery.Status.FAILED,
+        )
+        delivery.attempt_count = 1
+        delivery.save(update_fields=["attempt_count", "updated_at"])
+
+        response = self.client.post(
+            reverse("mailing:dashboard"),
+            {
+                "action": "queue",
+                "business_rule": "MANUAL",
+                "import_task": self.import_task.pk,
+                "limit": 100,
+                "selected_creator_ids": [creator.pk],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.status, EmailDelivery.Status.PENDING)
+
+    def test_manual_candidates_endpoint_returns_creator_name_and_id(self) -> None:
+        creator = self.create_creator()
+
+        response = self.client.get(
+            reverse("mailing:queue_candidates"),
+            {
+                "business_rule": "MANUAL",
+                "import_task": self.import_task.pk,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        candidate = response.json()["candidates"][0]
+        self.assertEqual(candidate["name"], creator.nickname)
+        self.assertEqual(candidate["creatorId"], "CreatorOne")
+        self.assertEqual(candidate["id"], str(creator.pk))
+
+    def test_sent_creators_are_excluded_from_all_candidate_rules(self) -> None:
+        sent_creator = self.create_creator(
+            handle="AlreadySent",
+            nickname="Already Sent",
+            email="already-sent@example.com",
+        )
+        unsent_creator = self.create_creator(
+            handle="ReadyToSend",
+            nickname="Ready To Send",
+            email="ready-to-send@example.com",
+        )
+        self.create_verified_card_target(sent_creator)
+        self.create_verified_card_target(unsent_creator)
+        self.create_delivery(
+            creator=sent_creator,
+            status=EmailDelivery.Status.SENT,
+        )
+
+        for business_rule in ("MANUAL", "CARD_SENT"):
+            response = self.client.get(
+                reverse("mailing:queue_candidates"),
+                {
+                    "business_rule": business_rule,
+                    "import_task": self.import_task.pk,
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            creator_ids = {
+                candidate["creatorId"]
+                for candidate in response.json()["candidates"]
+            }
+            self.assertNotIn("AlreadySent", creator_ids)
+            self.assertIn("ReadyToSend", creator_ids)
+
+    def test_dashboard_hides_failed_delivery_review_sentence(self) -> None:
+        self.create_delivery(status=EmailDelivery.Status.FAILED)
+
+        response = self.client.get(reverse("mailing:dashboard"))
+
+        self.assertNotContains(response, "封失败邮件等待人工核对")
+
+    def test_retry_endpoint_requeues_available_failure(self) -> None:
+        delivery = self.create_delivery(
+            status=EmailDelivery.Status.FAILED
+        )
+        delivery.retryable = True
+        delivery.last_failure_at = timezone.now()
+        delivery.save(
+            update_fields=[
+                "retryable",
+                "last_failure_at",
+                "updated_at",
+            ]
+        )
+        EmailDeliveryAttempt.objects.create(
+            delivery=delivery,
+            sequence=1,
+            attempt_date=timezone.localdate(),
+            daily_sequence=1,
+            status=EmailDeliveryAttempt.Status.FAILED,
+            started_at=timezone.now(),
+            finished_at=timezone.now(),
+        )
+
+        with patch(
+            "mailing.views.launch_email_sender",
+            return_value=True,
+        ) as launcher:
+            response = self.client.post(reverse("mailing:retry_failed"))
+
+        self.assertEqual(response.status_code, 302)
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.status, EmailDelivery.Status.PENDING)
+        launcher.assert_called_once_with()
 
     def test_dashboard_queues_product_creators_and_renders_delivery(self) -> None:
         creator = self.create_creator()
@@ -507,7 +786,6 @@ class SendCreatorEmailsCommandTests(MailingTestCase):
             DEFAULT_FROM_EMAIL="Jackson | Vaelos <sender@example.com>",
             CREATOR_EMAIL_IMAGE_PATH=image_path,
             CREATOR_EMAIL_DAILY_LIMIT=100,
-            CREATOR_EMAIL_SEND_INTERVAL_SECONDS=0,
             SPORTS_JACKET_URL="",
             WOMENS_SHORTS_URL="",
         )
@@ -545,8 +823,55 @@ class SendCreatorEmailsCommandTests(MailingTestCase):
         self.assertEqual(delivery.attempt_count, 1)
         self.assertIsNotNone(delivery.sent_at)
         self.assertTrue(delivery.message_id)
+        attempt = EmailDeliveryAttempt.objects.get(delivery=delivery)
+        self.assertEqual(attempt.status, EmailDeliveryAttempt.Status.SENT)
+        self.assertEqual(attempt.daily_sequence, 1)
+        self.assertEqual(attempt.attempt_date, timezone.localdate())
         self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(mail.outbox[0].to, ["creator@example.com"])
+        self.assertEqual(
+            get_service_state().status,
+            EmailSendingService.Status.STOPPED,
+        )
+
+    def test_sender_picks_up_delivery_queued_during_active_run(self) -> None:
+        first = self.create_delivery()
+        second_creator = self.create_creator(
+            handle="QueuedDuringRun",
+            email="queued-during-run@example.com",
+        )
+        queued_second = None
+
+        def send_and_enqueue(delivery, *, connection=None):
+            nonlocal queued_second
+            if delivery.pk == first.pk:
+                queued_second = self.create_delivery(creator=second_creator)
+            return delivery.message_id
+
+        with TemporaryDirectory() as directory:
+            image_path = Path(directory) / "FR7A6183.png"
+            image_path.write_bytes(b"\x89PNG\r\n\x1a\nemail-test")
+            with self._email_settings(image_path), patch(
+                "mailing.management.commands.send_creator_emails."
+                "send_creator_email",
+                side_effect=send_and_enqueue,
+            ):
+                call_command(
+                    "send_creator_emails",
+                    limit=100,
+                    interval=0,
+                    stdout=StringIO(),
+                )
+
+        self.assertIsNotNone(queued_second)
+        first.refresh_from_db()
+        queued_second.refresh_from_db()
+        self.assertEqual(first.status, EmailDelivery.Status.SENT)
+        self.assertEqual(queued_second.status, EmailDelivery.Status.SENT)
+        self.assertEqual(
+            get_service_state().status,
+            EmailSendingService.Status.STOPPED,
+        )
 
     def test_rolling_daily_limit_leaves_queue_unchanged(self) -> None:
         first = self.create_delivery(status=EmailDelivery.Status.SENT)
@@ -575,6 +900,131 @@ class SendCreatorEmailsCommandTests(MailingTestCase):
 
         second.refresh_from_db()
         self.assertEqual(second.status, EmailDelivery.Status.PENDING)
+
+    def test_transient_failure_retries_three_times_then_waits_until_tomorrow(
+        self,
+    ) -> None:
+        delivery = self.create_delivery()
+        with TemporaryDirectory() as directory:
+            image_path = Path(directory) / "FR7A6183.png"
+            image_path.write_bytes(b"\x89PNG\r\n\x1a\nemail-test")
+            with self._email_settings(image_path), patch(
+                "mailing.management.commands.send_creator_emails."
+                "send_creator_email",
+                side_effect=smtplib.SMTPException("temporary failure"),
+            ):
+                call_command(
+                    "send_creator_emails",
+                    limit=100,
+                    interval=0,
+                    stdout=StringIO(),
+                )
+
+        delivery.refresh_from_db()
+        self.assertEqual(
+            delivery.status,
+            EmailDelivery.Status.RETRY_WAITING,
+        )
+        self.assertEqual(delivery.attempt_count, 3)
+        self.assertEqual(delivery.attempts.count(), 3)
+        self.assertEqual(
+            list(
+                delivery.attempts.order_by("daily_sequence").values_list(
+                    "daily_sequence",
+                    flat=True,
+                )
+            ),
+            [1, 2, 3],
+        )
+        self.assertEqual(
+            timezone.localtime(delivery.next_retry_at).date(),
+            timezone.localdate() + timedelta(days=1),
+        )
+
+    def test_waiting_delivery_can_send_again_on_the_next_day(self) -> None:
+        delivery = self.create_delivery(
+            status=EmailDelivery.Status.RETRY_WAITING
+        )
+        yesterday = timezone.localdate() - timedelta(days=1)
+        yesterday_at = timezone.now() - timedelta(days=1)
+        delivery.attempt_count = 3
+        delivery.last_attempt_at = yesterday_at
+        delivery.next_retry_at = timezone.now() - timedelta(minutes=1)
+        delivery.save(
+            update_fields=[
+                "attempt_count",
+                "last_attempt_at",
+                "next_retry_at",
+                "updated_at",
+            ]
+        )
+        for sequence in range(1, 4):
+            EmailDeliveryAttempt.objects.create(
+                delivery=delivery,
+                sequence=sequence,
+                attempt_date=yesterday,
+                daily_sequence=sequence,
+                status=EmailDeliveryAttempt.Status.FAILED,
+                started_at=yesterday_at,
+                finished_at=yesterday_at,
+            )
+
+        with TemporaryDirectory() as directory:
+            image_path = Path(directory) / "FR7A6183.png"
+            image_path.write_bytes(b"\x89PNG\r\n\x1a\nemail-test")
+            with self._email_settings(image_path):
+                call_command(
+                    "send_creator_emails",
+                    limit=100,
+                    interval=0,
+                    stdout=StringIO(),
+                )
+
+        delivery.refresh_from_db()
+        self.assertEqual(delivery.status, EmailDelivery.Status.SENT)
+        self.assertEqual(delivery.attempt_count, 4)
+        latest = delivery.attempts.order_by("-sequence").first()
+        self.assertEqual(latest.attempt_date, timezone.localdate())
+        self.assertEqual(latest.daily_sequence, 1)
+        self.assertEqual(latest.status, EmailDeliveryAttempt.Status.SENT)
+
+    def test_default_sender_waits_random_interval_between_messages(
+        self,
+    ) -> None:
+        self.create_delivery()
+        second_creator = self.create_creator(
+            handle="RandomInterval",
+            email="random-interval@example.com",
+        )
+        self.create_delivery(creator=second_creator)
+
+        with TemporaryDirectory() as directory:
+            image_path = Path(directory) / "FR7A6183.png"
+            image_path.write_bytes(b"\x89PNG\r\n\x1a\nemail-test")
+            with self._email_settings(image_path), override_settings(
+                CREATOR_EMAIL_SEND_INTERVAL_MIN_SECONDS=30,
+                CREATOR_EMAIL_SEND_INTERVAL_MAX_SECONDS=60,
+            ), patch(
+                "mailing.management.commands.send_creator_emails."
+                "random.uniform",
+                side_effect=[35.0, 55.0],
+            ) as random_interval, patch(
+                "mailing.management.commands.send_creator_emails."
+                "wait_for_interval_or_stop",
+                return_value=False,
+            ) as wait:
+                call_command(
+                    "send_creator_emails",
+                    limit=100,
+                    interval=None,
+                    interval_min=30,
+                    interval_max=60,
+                    stdout=StringIO(),
+                )
+
+        self.assertEqual(random_interval.call_count, 2)
+        wait.assert_called_once()
+        self.assertEqual(wait.call_args.args[1], 35.0)
 
     def test_stop_request_prevents_claiming_the_next_email(self) -> None:
         first = self.create_delivery()

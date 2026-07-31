@@ -49,7 +49,11 @@
         </a>
     </div>
     <div class="workbench-metrics creator-metrics">
-        <article class="overview-card overview-card-primary">
+        <article
+            class="overview-card overview-card-primary business-explained"
+            tabindex="0"
+            data-business-tip="达人总数按达人账号全局去重，用于衡量当前达人库的整体规模。"
+        >
             <span class="overview-icon">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/>
@@ -59,7 +63,11 @@
             <strong>{{ creator_total }}</strong>
             <small>按达人账号全局去重</small>
         </article>
-        <article class="overview-card">
+        <article
+            class="overview-card business-explained"
+            tabindex="0"
+            data-business-tip="统计今天首次写入达人库的账号，用于观察每日数据增长。"
+        >
             <span class="overview-icon overview-icon-green">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M12 5v14M5 12h14"/>
@@ -69,7 +77,11 @@
             <strong>{{ creator_today }}</strong>
             <small>今日首次进入达人库</small>
         </article>
-        <article class="overview-card">
+        <article
+            class="overview-card business-explained"
+            tabindex="0"
+            data-business-tip="统计当前店铺今天完成招呼、邀请和合作卡片发送的达人。"
+        >
             <span class="overview-icon overview-icon-blue">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="m5 12 4 4L19 6"/>
@@ -79,7 +91,11 @@
             <strong>{{ contact_today }}</strong>
             <small>当前店铺今日成功人数</small>
         </article>
-        <article class="overview-card">
+        <article
+            class="overview-card business-explained"
+            tabindex="0"
+            data-business-tip="统计当前店铺历史联系成功且已完成业务验收的达人总数。"
+        >
             <span class="overview-icon overview-icon-violet">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z"/>
@@ -105,7 +121,11 @@
         </a>
     </div>
     <div class="workbench-metrics email-metrics">
-        <article class="overview-card">
+        <article
+            class="overview-card business-explained"
+            tabindex="0"
+            data-business-tip="统计今天已由邮件服务确认发送成功的达人邮件。"
+        >
             <span class="overview-icon overview-icon-green">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M4 4h16v16H4zM4 7l8 6 8-6"/>
@@ -115,18 +135,26 @@
             <strong>{{ email_today }}</strong>
             <small>今日发送成功邮件</small>
         </article>
-        <article class="overview-card overview-card-waiting">
-            <span class="overview-icon overview-icon-amber">
+        <article
+            class="overview-card overview-card-failed business-explained"
+            tabindex="0"
+            data-business-tip="统计今天至少发生一次发送失败，并且截至当前仍未发送成功的去重达人。"
+        >
+            <span class="overview-icon overview-icon-red">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                     <circle cx="12" cy="12" r="9"/>
-                    <path d="M12 7v5l3 2"/>
+                    <path d="M12 7v6M12 17h.01"/>
                 </svg>
             </span>
-            <span class="overview-label">队列等待</span>
-            <strong>{{ email_pending }}</strong>
-            <small>按入队时间串行处理</small>
+            <span class="overview-label">今日邮件发送失败人数</span>
+            <strong>{{ email_failed_today }}</strong>
+            <small>当前仍未发送成功的达人</small>
         </article>
-        <article class="overview-card">
+        <article
+            class="overview-card business-explained"
+            tabindex="0"
+            data-business-tip="累计发送成功的达人邮件数量，不包含待发送和失败记录。"
+        >
             <span class="overview-icon overview-icon-blue">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="m22 2-7 20-4-9-9-4 20-7Z"/>
@@ -151,7 +179,11 @@
         {% endif %}
     </div>
     <div class="execution-grid">
-        <article class="execution-panel">
+        <article
+            class="execution-panel business-explained"
+            tabindex="0"
+            data-business-tip="展示运行中或排队中的自动化达人联系任务及实时进度。"
+        >
             <header class="execution-heading">
                 <span class="execution-heading-icon contact-task-icon">
                     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -197,7 +229,11 @@
             </a>
         </article>
 
-        <article class="execution-panel">
+        <article
+            class="execution-panel business-explained"
+            tabindex="0"
+            data-business-tip="展示当前邮件发送队列，邮件服务会逐封发送并记录结果。"
+        >
             <header class="execution-heading">
                 <span class="execution-heading-icon email-task-icon">
                     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -245,6 +281,8 @@
     </div>
 </section>
 
+{% include "tasks/_outreach_records.html" %}
+
 <section class="feature-section" aria-labelledby="feature-title">
     <div class="section-title-row">
         <div>
@@ -253,7 +291,11 @@
         </div>
     </div>
     <div class="feature-grid">
-        <a class="feature-card" href="{% url 'tasks:creator-data' %}">
+        <a
+            class="feature-card business-explained"
+            href="{% url 'tasks:creator-data' %}"
+            data-business-tip="上传达人表格，审阅字段转换结果后写入标准达人库。"
+        >
             <span class="feature-icon feature-icon-data">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                     <ellipse cx="12" cy="5" rx="8" ry="3"/>
@@ -266,7 +308,11 @@
             </span>
             <i>→</i>
         </a>
-        <a class="feature-card" href="{% url 'creator_contact:dashboard' %}">
+        <a
+            class="feature-card business-explained"
+            href="{% url 'creator_contact:dashboard' %}"
+            data-business-tip="从指定导入批次选择达人，自动发送招呼、合作邀请和卡片。"
+        >
             <span class="feature-icon feature-icon-contact">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M19 8v6M16 11h6"/>
@@ -278,7 +324,11 @@
             </span>
             <i>→</i>
         </a>
-        <a class="feature-card" href="{% url 'mailing:dashboard' %}">
+        <a
+            class="feature-card business-explained"
+            href="{% url 'mailing:dashboard' %}"
+            data-business-tip="选择有邮箱的达人创建防重队列，并由邮件服务串行投递。"
+        >
             <span class="feature-icon feature-icon-mail">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M4 5h16v14H4zM4 7l8 6 8-6"/>

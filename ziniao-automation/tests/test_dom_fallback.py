@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import Mock
 from unittest.mock import patch
 
+from ziniao_automation.adaptive_locator import LocatorRecipe
 from ziniao_automation.dom_fallback import (
     DeepSeekDomFallback,
     is_dom_failure_message,
@@ -84,50 +85,89 @@ class DeepSeekDomFallbackTests(unittest.TestCase):
             is_dom_failure_message("invitationGroupId 与任务不一致")
         )
 
-    def test_locator_requires_one_visible_enabled_match(self) -> None:
+    def test_model_selects_candidate_id_and_never_returns_locator(self) -> None:
         driver = Mock()
-        driver.execute_script.return_value = {
+        driver.current_url = "https://example.test/connection/creator"
+        snapshot = {
             "url": "https://example.test",
             "title": "Find creators",
-            "elements": [],
+            "elements": [
+                {
+                    "tag": "input",
+                    "role": "searchbox",
+                    "placeholder": "Search creator",
+                    "enabled": True,
+                    "cssPath": "#creator-search",
+                    "parentText": "Find creators",
+                }
+            ],
         }
         element = Mock()
         element.id = "creator-search"
         element.is_displayed.return_value = True
         element.is_enabled.return_value = True
         driver.find_elements.return_value = [element]
-        fallback = DeepSeekDomFallback(api_key="test-key")
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        fallback = DeepSeekDomFallback(
+            api_key="test-key",
+            locator_cache_path=Path(directory.name) / "locators.sqlite3",
+        )
         fallback._request_json = Mock(
             return_value={
-                "decision": "use_locator",
+                "decision": "select",
+                "candidateId": "dom-001",
                 "reason": "输入框 role 已变化",
-                "candidates": [
-                    {
-                        "strategy": "css",
-                        "value": "input[role='combobox']",
-                        "confidence": 0.94,
-                    }
-                ],
+                "confidence": 0.94,
             }
         )
 
-        result = fallback.locate(
-            driver,
-            purpose="查找达人搜索框",
-            attempted_selectors=(("css selector", "input.old"),),
-        )
+        with (
+            patch(
+                "ziniao_automation.adaptive_locator.collect_ax_candidates",
+                return_value=("ax-empty", []),
+            ),
+            patch.object(
+                fallback,
+                "collect_interactive_dom",
+                return_value=snapshot,
+            ),
+            patch(
+                "ziniao_automation.adaptive_locator.synthesize_recipes",
+                return_value=[],
+            ),
+        ):
+            result = fallback.locate(
+                driver,
+                purpose="查找达人搜索框",
+                attempted_selectors=(("css selector", "input.old"),),
+            )
 
         self.assertIs(result, element)
         event = fallback.consume_events()[0]
-        self.assertEqual(event["status"], "validated")
+        self.assertEqual(event["status"], "candidate_validated")
+        self.assertEqual(event["candidateSource"], "dom")
         self.assertEqual(event["model"], "deepseek-v4-pro")
+        payload = fallback._request_json.call_args.kwargs["payload"]
+        self.assertEqual(payload["candidates"][0]["candidateId"], "dom-001")
+        self.assertNotIn("cssPath", payload["candidates"][0])
+        self.assertNotIn("attemptedSelectors", payload)
 
-    def test_locator_rejects_multiple_matches(self) -> None:
+    def test_locator_rejects_candidate_with_multiple_matches(self) -> None:
         driver = Mock()
-        driver.execute_script.return_value = {
+        driver.current_url = "https://example.test/connection/creator"
+        snapshot = {
             "url": "https://example.test",
             "title": "Find creators",
-            "elements": [],
+            "elements": [
+                {
+                    "tag": "button",
+                    "role": "button",
+                    "text": "Send",
+                    "enabled": True,
+                    "cssPath": "button",
+                }
+            ],
         }
         first = Mock(id="first")
         second = Mock(id="second")
@@ -135,61 +175,90 @@ class DeepSeekDomFallbackTests(unittest.TestCase):
             element.is_displayed.return_value = True
             element.is_enabled.return_value = True
         driver.find_elements.return_value = [first, second]
-        fallback = DeepSeekDomFallback(api_key="test-key")
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        fallback = DeepSeekDomFallback(
+            api_key="test-key",
+            locator_cache_path=Path(directory.name) / "locators.sqlite3",
+        )
         fallback._request_json = Mock(
             return_value={
-                "decision": "use_locator",
-                "candidates": [
-                    {
-                        "strategy": "css",
-                        "value": "button",
-                        "confidence": 0.99,
-                    }
-                ],
+                "decision": "select",
+                "candidateId": "dom-001",
+                "confidence": 0.99,
             }
         )
 
-        result = fallback.locate(
-            driver,
-            purpose="唯一按钮",
-            attempted_selectors=(),
-        )
+        with (
+            patch(
+                "ziniao_automation.adaptive_locator.collect_ax_candidates",
+                return_value=("ax-empty", []),
+            ),
+            patch.object(
+                fallback,
+                "collect_interactive_dom",
+                return_value=snapshot,
+            ),
+        ):
+            result = fallback.locate(
+                driver,
+                purpose="发送按钮",
+                attempted_selectors=(),
+            )
 
         self.assertIsNone(result)
         self.assertEqual(
             fallback.consume_events()[0]["status"],
-            "no_unique_match",
+            "selected_candidate_stale",
         )
 
     def test_locator_honors_model_stop_even_if_candidates_are_present(
         self,
     ) -> None:
         driver = Mock()
-        driver.execute_script.return_value = {
+        driver.current_url = "https://example.test/connection/creator"
+        snapshot = {
             "url": "https://example.test",
             "title": "Find creators",
-            "elements": [],
+            "elements": [
+                {
+                    "tag": "button",
+                    "role": "button",
+                    "text": "Send",
+                    "enabled": True,
+                    "cssPath": "button",
+                }
+            ],
         }
-        fallback = DeepSeekDomFallback(api_key="test-key")
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        fallback = DeepSeekDomFallback(
+            api_key="test-key",
+            locator_cache_path=Path(directory.name) / "locators.sqlite3",
+        )
         fallback._request_json = Mock(
             return_value={
                 "decision": "stop",
                 "reason": "无法安全确认",
-                "candidates": [
-                    {
-                        "strategy": "css",
-                        "value": "button",
-                        "confidence": 0.99,
-                    }
-                ],
             }
         )
 
-        result = fallback.locate(
-            driver,
-            purpose="定位按钮",
-            attempted_selectors=(),
-        )
+        with (
+            patch(
+                "ziniao_automation.adaptive_locator.collect_ax_candidates",
+                return_value=("ax-empty", []),
+            ),
+            patch.object(
+                fallback,
+                "collect_interactive_dom",
+                return_value=snapshot,
+            ),
+        ):
+            result = fallback.locate(
+                driver,
+                purpose="发送按钮",
+                attempted_selectors=(),
+            )
 
         self.assertIsNone(result)
         driver.find_elements.assert_not_called()
@@ -197,6 +266,38 @@ class DeepSeekDomFallbackTests(unittest.TestCase):
             fallback.consume_events()[0]["status"],
             "model_stopped",
         )
+
+    def test_healed_recipes_are_committed_after_interaction_success(
+        self,
+    ) -> None:
+        element = Mock()
+        element.id = "healed-button"
+        recipe = {
+            "page": "example.test/page",
+            "target": "target-key",
+            "strategy": "css",
+            "value": "button[data-e2e=\"send\"]",
+            "kind": "stable_attribute",
+            "source": "ax_candidate",
+            "confidence": 0.95,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            fallback = DeepSeekDomFallback(
+                api_key="test-key",
+                locator_cache_path=Path(directory) / "locators.sqlite3",
+            )
+            fallback._pending_recipes[element.id] = [recipe]
+            fallback.record_interaction_success(element)
+
+            saved = fallback.locator_store.ranked(
+                recipe["page"],
+                recipe["target"],
+            )
+
+        self.assertEqual(len(saved), 1)
+        self.assertIsInstance(saved[0], LocatorRecipe)
+        events = fallback.consume_events()
+        self.assertEqual(events[0]["status"], "recipes_committed")
 
 
 if __name__ == "__main__":

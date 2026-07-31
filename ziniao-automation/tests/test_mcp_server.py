@@ -484,6 +484,167 @@ class ZiniaoContactMcpServerTests(unittest.TestCase):
         self.assertIsNone(state.workflow)
         workflow.search_creator.assert_called_once_with("@creator")
 
+    def test_recoverable_step_retries_with_state_machine_before_model(
+        self,
+    ) -> None:
+        state = ContactAutomationState()
+        workflow = Mock()
+        success = Mock()
+        success.to_dict.return_value = {
+            "step": 2,
+            "success": True,
+            "evidence": {},
+        }
+        workflow.search_creator.side_effect = [
+            ZiniaoWorkflowError("未找到目标达人搜索结果卡片"),
+            success,
+        ]
+        workflow.recover_for_retry.return_value = {
+            "checkpoint": "find-creators",
+        }
+        workflow.consume_dom_fallback_events.return_value = []
+        state.workflow = workflow
+        state._check_order = Mock()  # type: ignore[method-assign]
+
+        result = state.call(
+            "ziniao_search_creator",
+            {"creator": "@creator"},
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(workflow.search_creator.call_count, 2)
+        workflow.recover_for_retry.assert_called_once_with(
+            "ziniao_search_creator"
+        )
+        self.assertEqual(
+            result["data"]["evidence"]["stateMachineStages"],
+            ["deterministic-1", "deterministic-2"],
+        )
+        self.assertFalse(
+            result["data"]["evidence"]["modelFallbackStageUsed"]
+        )
+
+    def test_second_failure_uses_ax_then_dom_model_fallback_stage(
+        self,
+    ) -> None:
+        state = ContactAutomationState()
+        workflow = Mock()
+        success = Mock()
+        success.to_dict.return_value = {
+            "step": 2,
+            "success": True,
+            "evidence": {},
+        }
+        workflow.search_creator.side_effect = [
+            ZiniaoWorkflowError("未找到目标达人搜索结果卡片"),
+            ZiniaoWorkflowError("页面重绘后仍未显示结果卡片"),
+            success,
+        ]
+        workflow.recover_for_retry.return_value = {
+            "checkpoint": "find-creators",
+        }
+        workflow.consume_dom_fallback_events.return_value = [
+            {
+                "candidateSource": "ax",
+                "status": "candidate_validated",
+            }
+        ]
+        state.workflow = workflow
+        state._check_order = Mock()  # type: ignore[method-assign]
+
+        result = state.call(
+            "ziniao_search_creator",
+            {"creator": "@creator"},
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(workflow.search_creator.call_count, 3)
+        self.assertEqual(
+            [
+                call.args[0]
+                for call in workflow.set_model_fallback_enabled.call_args_list
+            ],
+            [False, False, True],
+        )
+        self.assertTrue(
+            result["data"]["evidence"]["modelFallbackStageUsed"]
+        )
+        self.assertEqual(
+            result["data"]["evidence"]["adaptiveLocatorEvents"][0][
+                "candidateSource"
+            ],
+            "ax",
+        )
+
+    def test_model_fallback_failure_skips_unmodified_creator_only(
+        self,
+    ) -> None:
+        state = ContactAutomationState()
+        workflow = Mock()
+        workflow.search_creator.side_effect = ZiniaoWorkflowError(
+            "未找到目标达人搜索结果卡片"
+        )
+        workflow.recover_for_retry.return_value = {
+            "checkpoint": "find-creators",
+        }
+        workflow.diagnose_dom_failure.return_value = {}
+        workflow.consume_dom_fallback_events.return_value = []
+        state.workflow = workflow
+        state._check_order = Mock()  # type: ignore[method-assign]
+
+        result = state.call(
+            "ziniao_search_creator",
+            {"creator": "@creator"},
+        )
+
+        self.assertFalse(result["success"])
+        self.assertEqual(workflow.search_creator.call_count, 3)
+        self.assertTrue(result["skipCreator"])
+        self.assertFalse(result["reviewRequired"])
+        self.assertEqual(result["failureStage"], "SKIPPED")
+
+    def test_failure_after_greeting_requires_review_not_skip(
+        self,
+    ) -> None:
+        state = ContactAutomationState()
+        state.completed["ziniao_send_greeting"] = {
+            "success": True,
+            "status": "SUCCESS",
+            "data": {"evidence": {"messageSent": True}},
+            "error": None,
+        }
+        workflow = Mock()
+        workflow.open_target_collaboration.side_effect = (
+            ZiniaoWorkflowError(
+                "未找到发送其他邀请开展合作按钮"
+            )
+        )
+        workflow.recover_for_retry.return_value = {
+            "checkpoint": "chat",
+        }
+        workflow.diagnose_dom_failure.return_value = {}
+        workflow.consume_dom_fallback_events.return_value = []
+        state.workflow = workflow
+        state._check_order = Mock()  # type: ignore[method-assign]
+        state.creator = "@creator"
+        state.creator_id = "7493994012378827459"
+
+        result = state.call(
+            "ziniao_open_target_collaboration",
+            {
+                "creator": "@creator",
+                "creatorId": "7493994012378827459",
+            },
+        )
+
+        self.assertFalse(result["success"])
+        self.assertFalse(result["skipCreator"])
+        self.assertTrue(result["reviewRequired"])
+        self.assertEqual(
+            result["failureStage"],
+            "REVIEW_REQUIRED",
+        )
+
     def test_send_invitation_rejects_result_from_other_group(
         self,
     ) -> None:

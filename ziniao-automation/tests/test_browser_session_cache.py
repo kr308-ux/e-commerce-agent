@@ -74,6 +74,35 @@ class BrowserSessionCacheTests(unittest.TestCase):
 
         self.assertEqual(resolved, entry)
 
+    def test_transient_probe_misses_retry_before_reusing_cache(self) -> None:
+        entry = self._entry()
+        self.cache.save(entry)
+        self.cache.live_probe_retry_seconds = 0
+        with patch.object(
+            self.cache,
+            "probe",
+            side_effect=[None, None, self.endpoint],
+        ) as probe:
+            resolved = self.cache.resolve_live(self.store.browser_id)
+
+        self.assertEqual(resolved, entry)
+        self.assertEqual(probe.call_count, 3)
+        self.assertEqual(self.cache.load(self.store.browser_id), entry)
+
+    def test_repeated_probe_misses_invalidate_cache(self) -> None:
+        self.cache.save(self._entry())
+        self.cache.live_probe_retry_seconds = 0
+        with patch.object(
+            self.cache,
+            "probe",
+            return_value=None,
+        ) as probe:
+            resolved = self.cache.resolve_live(self.store.browser_id)
+
+        self.assertIsNone(resolved)
+        self.assertEqual(probe.call_count, 3)
+        self.assertIsNone(self.cache.load(self.store.browser_id))
+
     def test_changed_devtools_uuid_invalidates_cache(self) -> None:
         self.cache.save(self._entry())
         with patch.object(

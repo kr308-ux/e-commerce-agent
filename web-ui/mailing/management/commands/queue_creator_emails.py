@@ -82,6 +82,7 @@ class Command(BaseCommand):
                 f"发送中 {result.sending}，"
                 f"失败未重试 {result.failed_not_retried}，"
                 f"已耗尽尝试 {result.exhausted}，"
+                f"今日已达上限 {result.deferred_today}，"
                 f"无效/空邮箱 {result.invalid_email}。"
             )
         )

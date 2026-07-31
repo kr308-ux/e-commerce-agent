@@ -459,8 +459,8 @@
                             </td>
                             <td><span class="candidate-rank">{{ candidate.rank|default:forloop.counter }}</span></td>
                             <td>
-                                <strong>{{ candidate.nickname|default:candidate.creator_id }}</strong>
-                                <small class="block-muted">@{{ candidate.creator_id }}</small>
+                                <strong>{{ candidate.nickname|default:"—" }}</strong>
+                                <small class="block-muted">达人 ID：{{ candidate.preview_creator_id }}</small>
                             </td>
                             <td>
                                 {% if candidate.recent_7_day_revenue != None %}
@@ -561,5 +561,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'creator_contact/contact.js' %}?v=20260730-layout2" defer></script>
+<script src="{% static 'creator_contact/contact.js' %}?v=20260730-creator-id" defer></script>
 {% endblock %}

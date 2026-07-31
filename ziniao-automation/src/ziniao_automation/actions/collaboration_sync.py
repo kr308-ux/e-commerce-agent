@@ -425,6 +425,40 @@ class TargetCollaborationSync:
             TARGET_INVITATION_PATH
         )
 
+    @staticmethod
+    def _is_trusted_shop_host(host: str) -> bool:
+        normalized = str(host or "").lower()
+        return (
+            normalized.endswith(".tiktokshopglobalselling.com")
+            or normalized.endswith(".tiktokglobalshop.com")
+            or normalized.endswith(".tiktokshop.com")
+            or normalized.endswith(".tiktok.com")
+        )
+
+    @classmethod
+    def _affiliate_url_rank(cls, url: str) -> int:
+        parsed = urlparse(str(url or ""))
+        host = (parsed.hostname or "").lower()
+        path = parsed.path.rstrip("/").lower()
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not cls._is_trusted_shop_host(host)
+        ):
+            return 0
+        if host.startswith("affiliate."):
+            if path == TARGET_INVITATION_PATH:
+                return 500
+            query = parse_qs(parsed.query)
+            if str((query.get("shop_id") or [""])[0]).strip():
+                return 450
+            return 400
+        if (
+            (host.startswith("seller.") or host.startswith("shop."))
+            and path.startswith("/affiliate")
+        ):
+            return 300
+        return 0
+
     def _window_urls(self) -> dict[str, str]:
         handles = set(self.driver.window_handles)
         urls: dict[str, str] = {}
@@ -489,62 +523,215 @@ class TargetCollaborationSync:
         return False
 
     def _affiliate_window(self) -> str | None:
-        selected: str | None = None
-        try:
-            current_url = self.driver.current_url.lower()
-            if (
-                "tiktokshopglobalselling.com/affiliate" in current_url
-                or "affiliate.tiktokshopglobalselling.com" in current_url
-            ):
-                return self.driver.current_window_handle
-        except Exception:
-            pass
         handles = list(self.driver.window_handles)
         urls = self._window_urls()
-        prioritized = [
-            handle
-            for handle in reversed(handles)
-            if (
-                "tiktokshopglobalselling.com/affiliate"
-                in urls.get(handle, "").lower()
-                or "affiliate.tiktokshopglobalselling.com"
-                in urls.get(handle, "").lower()
-            )
-        ]
-        prioritized.extend(
-            handle
-            for handle in reversed(handles)
-            if handle not in prioritized and handle not in urls
-        )
-        for handle in prioritized:
+        ranked: list[tuple[int, int, str]] = []
+        for index, handle in enumerate(handles):
             try:
-                self.driver.switch_to.window(handle)
-                current_url = self.driver.current_url.lower()
-                if (
-                    "tiktokshopglobalselling.com/affiliate" in current_url
-                    or "affiliate.tiktokshopglobalselling.com" in current_url
-                ):
-                    selected = handle
-                    break
+                url = urls.get(handle, "")
+                if not url:
+                    self.driver.switch_to.window(handle)
+                    url = self.driver.current_url
+                rank = self._affiliate_url_rank(url)
+                if rank:
+                    ranked.append((rank, index, handle))
             except Exception:
                 continue
-        if selected is not None:
-            self.driver.switch_to.window(selected)
+        if not ranked:
+            return None
+        _rank, _index, selected = max(ranked)
+        self.driver.switch_to.window(selected)
         return selected
+
+    @staticmethod
+    def _is_seller_url(url: str) -> bool:
+        parsed = urlparse(str(url or ""))
+        host = (parsed.hostname or "").lower()
+        path = parsed.path.lower()
+        return (
+            parsed.scheme in {"http", "https"}
+            and (
+                host.startswith("seller.")
+                or host.startswith("shop.")
+            )
+            and TargetCollaborationSync._is_trusted_shop_host(host)
+            and not path.startswith(("/login", "/signin"))
+        )
+
+    def _seller_window(self) -> tuple[str, str] | None:
+        handles = list(self.driver.window_handles)
+        urls = self._window_urls()
+        for handle in reversed(handles):
+            try:
+                url = urls.get(handle, "")
+                if not url:
+                    self.driver.switch_to.window(handle)
+                    url = self.driver.current_url
+                if self._is_seller_url(url):
+                    self.driver.switch_to.window(handle)
+                    return handle, url
+            except Exception:
+                continue
+        return None
+
+    def _normalize_affiliate_action(
+        self,
+        element: WebElement,
+    ) -> WebElement:
+        try:
+            if (element.tag_name or "").lower() == "a":
+                return element
+        except StaleElementReferenceException:
+            return element
+        try:
+            descendants = [
+                candidate
+                for candidate in element.find_elements(
+                    By.CSS_SELECTOR,
+                    'a[href*="/affiliate"], '
+                    'a[href*="affiliate.tiktokshop"]',
+                )
+                if self._visible(candidate)
+            ]
+        except StaleElementReferenceException:
+            descendants = []
+        if len(descendants) == 1:
+            return descendants[0]
+        return element
+
+    @classmethod
+    def _affiliate_action_identity(
+        cls,
+        element: WebElement,
+    ) -> tuple[str, int]:
+        try:
+            href = str(element.get_attribute("href") or "").strip()
+            text = " ".join(str(element.text or "").split()).casefold()
+            tag = str(element.tag_name or "").lower()
+            role = str(element.get_attribute("role") or "").lower()
+        except StaleElementReferenceException:
+            return "", 0
+
+        if href:
+            parsed = urlparse(href)
+            host = (parsed.hostname or "").lower()
+            path = parsed.path.rstrip("/").lower()
+            if (
+                parsed.scheme in {"http", "https"}
+                and cls._is_trusted_shop_host(host)
+                and host.startswith("affiliate.")
+            ):
+                return "affiliate-center", 950
+            if path.startswith("/affiliate"):
+                return "affiliate-landing", (
+                    1000 if path == "/affiliate/landing" else 900
+                )
+
+        exact_labels = {"联盟", "affiliate"}
+        center_labels = {
+            "前往联盟中心首页",
+            "go to affiliate center homepage",
+            "go to affiliate center",
+        }
+        if text in center_labels:
+            return "affiliate-landing", 800
+        if text in exact_labels:
+            if tag == "a":
+                return "affiliate-landing", 750
+            if role in {"menuitem", "button"} or tag == "button":
+                return "affiliate-landing", 650
+        if "联盟" in text or "affiliate" in text:
+            return f"element:{element.id}", 300
+        return "", 0
+
+    def _affiliate_entry(self) -> WebElement | None:
+        raw_candidates: dict[str, WebElement] = {}
+        selectors = (
+            (
+                By.CSS_SELECTOR,
+                'a[href*="/affiliate"], a[href*="affiliate.tiktokshop"]',
+            ),
+            (
+                By.XPATH,
+                "//*[self::a or self::button or @role='menuitem' "
+                "or @role='button'][contains(normalize-space(.), '联盟') "
+                "or contains(normalize-space(.), 'Affiliate')]",
+            ),
+        )
+        for by, selector in selectors:
+            for element in self.driver.find_elements(by, selector):
+                if self._visible(element):
+                    raw_candidates[element.id] = element
+
+        semantic_candidates: dict[
+            str,
+            tuple[int, WebElement],
+        ] = {}
+        for raw_element in raw_candidates.values():
+            element = self._normalize_affiliate_action(raw_element)
+            identity, score = self._affiliate_action_identity(element)
+            if not identity or not score or not self._visible(element):
+                continue
+            previous = semantic_candidates.get(identity)
+            if previous is None or score > previous[0]:
+                semantic_candidates[identity] = (score, element)
+
+        if not semantic_candidates:
+            return None
+        highest_score = max(
+            score for score, _element in semantic_candidates.values()
+        )
+        winners = [
+            element
+            for score, element in semantic_candidates.values()
+            if score == highest_score
+        ]
+        if len(winners) == 1:
+            return winners[0]
+        raise ZiniaoWorkflowError(
+            "店铺首页存在多个语义不同且同优先级的"
+            "“联盟/Affiliate”入口，已停止只读同步。"
+        )
+
+    def _open_affiliate_from_store(self) -> str | None:
+        """Navigate a temporary tab in the same logged-in store browser."""
+        seller = self._seller_window()
+        if seller is None:
+            return None
+        _seller_handle, seller_url = seller
+        self.driver.switch_to.new_window("tab")
+        self.driver.get(seller_url)
+        self._wait_for_document()
+        entry = self._wait(
+            lambda _driver: self._affiliate_entry() or False,
+            message=(
+                "已复用店铺浏览器，但店铺首页未找到可确认的"
+                "“联盟/Affiliate”入口。"
+            ),
+        )
+        self._click_read_only(entry)
+        return self._wait(
+            lambda _driver: self._affiliate_window() or False,
+            message="从店铺首页进入联盟页面失败。",
+        )
 
     @staticmethod
     def _direct_target_url(current_url: str) -> str:
         parsed = urlparse(current_url)
-        if not parsed.netloc.startswith("affiliate."):
+        host = (parsed.hostname or "").lower()
+        if (
+            not host.startswith("affiliate.")
+            or not TargetCollaborationSync._is_trusted_shop_host(host)
+        ):
             return ""
         query = parse_qs(parsed.query)
         shop_id = str((query.get("shop_id") or [""])[0]).strip()
         if not shop_id:
             return ""
         flat_query = {
-            key: str(values[-1])
-            for key, values in query.items()
-            if values
+            key: str(query[key][-1])
+            for key in ("shop_id", "shop_region", "region", "lang", "locale")
+            if query.get(key)
         }
         flat_query["tab"] = "1"
         return urlunparse(
@@ -591,20 +778,23 @@ class TargetCollaborationSync:
             self._wait_for_document()
             return self.driver.current_url
 
-        if self._affiliate_window() is None:
+        if (
+            self._affiliate_window() is None
+            and self._open_affiliate_from_store() is None
+        ):
             raise ZiniaoWorkflowError(
-                "当前店铺没有已登录的 TikTok Shop 联盟页面。"
+                "当前复用浏览器没有已登录的 TikTok Shop "
+                "店铺页或联盟页面。"
             )
 
         direct_url = self._direct_target_url(self.driver.current_url)
         if direct_url:
             self.driver.get(direct_url)
         else:
-            card = self._landing_target_card()
-            if card is None:
-                raise ZiniaoWorkflowError(
-                    "联盟首页未找到唯一“定向合作设置”入口。"
-                )
+            card = self._wait(
+                lambda _driver: self._landing_target_card() or False,
+                message="联盟首页未找到唯一“定向合作设置”入口。",
+            )
             self._click_read_only(card)
             self._wait(
                 lambda _driver: self._activate_target_window(),
@@ -893,8 +1083,36 @@ class TargetCollaborationSync:
         return [option.to_dict() for option in options.values()]
 
     def sync(self) -> list[dict[str, Any]]:
-        """Compatibility alias used by service and CLI callers."""
-        return self.sync_in_progress()
+        """Run read-only synchronization and restore the caller's tab."""
+        try:
+            original_handle = self.driver.current_window_handle
+        except Exception:
+            original_handle = ""
+        try:
+            original_handles = set(self.driver.window_handles)
+        except Exception:
+            original_handles = set()
+        try:
+            return self.sync_in_progress()
+        finally:
+            try:
+                for handle in list(self.driver.window_handles):
+                    if handle in original_handles:
+                        continue
+                    try:
+                        self.driver.switch_to.window(handle)
+                        if self._is_target_url(self.driver.current_url):
+                            time.sleep(
+                                round(random.uniform(1.0, 2.0), 3)
+                            )
+                        self.driver.close()
+                    except Exception:
+                        continue
+                remaining = set(self.driver.window_handles)
+                if original_handle and original_handle in remaining:
+                    self.driver.switch_to.window(original_handle)
+            except Exception:
+                pass
 
 
 def _xpath_literal(value: str) -> str:

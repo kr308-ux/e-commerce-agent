@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from django.db import models
 
-from tasks.models import Creator
+from tasks.models import Creator, ImportTask
 
 
 def normalize_creator_id(value: object) -> str:
@@ -107,6 +107,7 @@ class EmailDelivery(models.Model):
         SENDING = "SENDING", "发送中"
         SENT = "SENT", "发送成功"
         FAILED = "FAILED", "发送失败"
+        RETRY_WAITING = "RETRY_WAITING", "等待明日重试"
         SKIPPED = "SKIPPED", "已跳过"
 
     creator = models.ForeignKey(
@@ -116,8 +117,20 @@ class EmailDelivery(models.Model):
         null=True,
         blank=True,
     )
+    source_import_task = models.ForeignKey(
+        ImportTask,
+        related_name="email_deliveries",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="创建或重新入队该邮件时选择的导入批次。",
+    )
     recipient_key = models.CharField(max_length=400, unique=True)
-    creator_id_snapshot = models.CharField(max_length=160, blank=True)
+    creator_id_snapshot = models.CharField(
+        max_length=160,
+        blank=True,
+        db_index=True,
+    )
     creator_name_snapshot = models.CharField(max_length=255)
     recipient_email = models.EmailField(max_length=320)
     template_version = models.ForeignKey(
@@ -137,13 +150,38 @@ class EmailDelivery(models.Model):
     message_id = models.CharField(max_length=255, blank=True)
     error_code = models.CharField(max_length=80, blank=True)
     error_message = models.TextField(blank=True)
-    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    retryable = models.BooleanField(default=True, db_index=True)
+    last_failure_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+    next_retry_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+    last_attempt_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+    )
     sent_at = models.DateTimeField(null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["created_at", "id"]
+        indexes = [
+            models.Index(
+                fields=["status", "-updated_at"],
+                name="mail_status_update_idx",
+            ),
+            models.Index(
+                fields=["source_import_task", "-updated_at"],
+                name="mail_batch_update_idx",
+            ),
+        ]
 
     def save(self, *args, **kwargs) -> None:
         self.creator_id_snapshot = normalize_creator_id(
@@ -165,6 +203,62 @@ class EmailDelivery(models.Model):
         return (
             f"{self.creator_name_snapshot} <{self.recipient_email}> · "
             f"{self.get_status_display()}"
+        )
+
+
+class EmailDeliveryAttempt(models.Model):
+    """Immutable audit record for one actual SMTP delivery attempt."""
+
+    class Status(models.TextChoices):
+        STARTED = "STARTED", "发送中"
+        SENT = "SENT", "发送成功"
+        FAILED = "FAILED", "发送失败"
+
+    delivery = models.ForeignKey(
+        EmailDelivery,
+        related_name="attempts",
+        on_delete=models.CASCADE,
+    )
+    sequence = models.PositiveIntegerField()
+    attempt_date = models.DateField(db_index=True)
+    daily_sequence = models.PositiveSmallIntegerField()
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.STARTED,
+        db_index=True,
+    )
+    message_id = models.CharField(max_length=255, blank=True)
+    error_code = models.CharField(max_length=80, blank=True)
+    error_message = models.TextField(blank=True)
+    started_at = models.DateTimeField()
+    finished_at = models.DateTimeField(null=True, blank=True)
+    is_legacy_snapshot = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-started_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["delivery", "sequence"],
+                name="unique_mail_delivery_attempt_seq",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["attempt_date", "status"],
+                name="mail_attempt_day_status_idx",
+            ),
+            models.Index(
+                fields=["delivery", "attempt_date"],
+                name="mail_attempt_delivery_day_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.delivery.recipient_email} · "
+            f"{self.attempt_date} #{self.daily_sequence}"
         )
 
 

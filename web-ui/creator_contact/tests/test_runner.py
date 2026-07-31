@@ -6,6 +6,7 @@ from creator_contact.models import (
 from creator_contact.services.candidate_selector import freeze_task_targets
 from creator_contact.services.collaboration_sync import (
     CollaborationSyncBatch,
+    CollaborationSyncBrowserBusyError,
     CollaborationSyncRunner,
     SubprocessCollaborationExecutor,
 )
@@ -498,6 +499,74 @@ class ContactRunnerTests(CreatorContactTestCase):
         self.assertFalse(target.invitation_created)
         self.assertFalse(ContactedCreator.objects.exists())
 
+    def test_review_required_target_does_not_stop_following_creator(self):
+        task = self.create_contact_task(top_n=2)
+        freeze_task_targets(task)
+
+        def executor(current_task, target):
+            if target.rank == 1:
+                return {
+                    "success": False,
+                    "messageSent": True,
+                    "reviewRequired": True,
+                    "failureStage": "REVIEW_REQUIRED",
+                    "errorCode": "MODEL_FALLBACK_EXHAUSTED",
+                    "errorMessage": "写入后无法恢复当前页面",
+                    "steps": [],
+                }
+            return self.invitation_executor(current_task, target)
+
+        result = CreatorContactRunner(
+            task,
+            executor=executor,
+            card_executor=self.accepted_card_executor,
+        ).run()
+        targets = list(task.targets.order_by("rank"))
+
+        self.assertEqual(
+            targets[0].status,
+            CreatorContactTarget.Status.REVIEW_REQUIRED,
+        )
+        self.assertEqual(
+            targets[1].status,
+            CreatorContactTarget.Status.SUCCESS,
+        )
+        self.assertEqual(
+            result.status,
+            CreatorContactTask.Status.PARTIAL_SUCCESS,
+        )
+        self.assertEqual(
+            result.final_summary["reviewRequiredCount"],
+            1,
+        )
+
+    def test_task_fatal_result_stops_batch_but_not_worker_contract(self):
+        task = self.create_contact_task(top_n=2)
+        freeze_task_targets(task)
+        calls = []
+
+        def executor(_current_task, target):
+            calls.append(target.rank)
+            return {
+                "success": False,
+                "taskFatal": True,
+                "errorCode": "CONNECTION_ERROR",
+                "errorMessage": "店铺浏览器不可连接",
+                "steps": [],
+            }
+
+        result = CreatorContactRunner(
+            task,
+            executor=executor,
+        ).run()
+
+        self.assertEqual(calls, [1])
+        self.assertEqual(
+            result.status,
+            CreatorContactTask.Status.FAILED,
+        )
+        self.assertEqual(result.error_code, "CONNECTION_ERROR")
+
     def test_button_click_is_deduped_even_when_panel_sync_times_out(self):
         task = self.create_contact_task(top_n=1)
         freeze_task_targets(task)
@@ -727,7 +796,11 @@ class ContactRunnerTests(CreatorContactTestCase):
         self.assertIn("--greeting-message", command)
         self.assertEqual(
             command[command.index("--creator") + 1],
-            target.creator_handle_snapshot,
+            target.imported_creator_id,
+        )
+        self.assertNotEqual(
+            command[command.index("--creator") + 1],
+            target.nickname_snapshot,
         )
         self.assertFalse(
             command[command.index("--creator") + 1].startswith("@")
@@ -950,6 +1023,33 @@ class ContactRunnerTests(CreatorContactTestCase):
         self.assertEqual(result["errorCode"], "ROOT_CAUSE")
         self.assertEqual(result["errorMessage"], "精确错误")
 
+    def test_final_json_parser_preserves_review_required_state(self):
+        final_event = {
+            "type": "text",
+            "part": {
+                "text": json.dumps(
+                    {
+                        "success": False,
+                        "reviewRequired": True,
+                        "skipCreator": False,
+                        "failureStage": "REVIEW_REQUIRED",
+                        "errorCode": "MODEL_FALLBACK_EXHAUSTED",
+                    }
+                )
+            },
+        }
+
+        result = SubprocessContactExecutor._parse_output(
+            json.dumps(final_event)
+        )
+
+        self.assertTrue(result["reviewRequired"])
+        self.assertFalse(result["skipCreator"])
+        self.assertEqual(
+            result["failureStage"],
+            "REVIEW_REQUIRED",
+        )
+
     def test_card_batch_executor_opens_project_once_for_all_targets(self):
         task = self.create_contact_task(top_n=2)
         freeze_task_targets(task)
@@ -1073,6 +1173,23 @@ class ContactRunnerTests(CreatorContactTestCase):
 
 
 class CollaborationSyncRunnerTests(CreatorContactTestCase):
+    def test_busy_browser_requeues_job_instead_of_failing(self):
+        job = CollaborationSyncJob.objects.create(store_id=self.store_id)
+
+        def busy_executor(_store_id):
+            raise CollaborationSyncBrowserBusyError(
+                "等待浏览器控制权超时。"
+            )
+
+        result = CollaborationSyncRunner(
+            job,
+            executor=busy_executor,
+        ).run()
+
+        self.assertEqual(result.status, CollaborationSyncJob.Status.PENDING)
+        self.assertEqual(result.error_code, "BROWSER_BUSY")
+        self.assertIsNone(result.finished_at)
+
     def test_upserts_ongoing_rows_and_deactivates_missing_options(self):
         stale = DirectedCollaborationOption.objects.create(
             store_id=self.store_id,
@@ -1268,3 +1385,34 @@ class CollaborationSyncRunnerTests(CreatorContactTestCase):
             ["--store-id", "store-test-1", "--json"],
         )
         self.assertEqual(rows[0]["invitationGroupId"], "group-13")
+
+    def test_subprocess_sync_executor_classifies_busy_browser(self):
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout=json.dumps(
+                {
+                    "success": False,
+                    "storeId": self.store_id,
+                    "options": [],
+                    "errorCode": "BROWSER_BUSY",
+                    "errorMessage": "等待浏览器控制权超时。",
+                }
+            ),
+            stderr="",
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "ZINIAO_COMPANY": "test-company",
+                "ZINIAO_USERNAME": "test-user",
+                "ZINIAO_PASSWORD": "test-password",
+            },
+        ), patch(
+            "creator_contact.services.collaboration_sync.subprocess.run",
+            return_value=completed,
+        ):
+            with self.assertRaises(
+                CollaborationSyncBrowserBusyError
+            ):
+                list(SubprocessCollaborationExecutor()(self.store_id))

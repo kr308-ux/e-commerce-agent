@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from ziniao_automation.actions.accepted_collaboration import (
     AcceptedCollaborationWorkflow,
@@ -155,6 +155,56 @@ class AcceptedCollaborationWorkflowTests(unittest.TestCase):
         self.assertEqual(result.evidence["acceptedCreatorCount"], 2)
         driver.get.assert_not_called()
         driver.refresh.assert_not_called()
+
+    @patch(
+        "ziniao_automation.actions.accepted_collaboration."
+        "TargetCollaborationSync"
+    )
+    def test_opens_project_by_name_without_checking_accepted_count(
+        self,
+        sync_class: Mock,
+    ) -> None:
+        driver = Mock()
+        driver.current_url = "https://example.test/target-invitation"
+        driver.current_window_handle = "project-detail"
+        driver.window_handles = ["project-detail"]
+        workflow = AcceptedCollaborationWorkflow(driver)
+        sync = sync_class.return_value
+        sync._affiliate_window.return_value = "affiliate"
+        sync._direct_target_url.return_value = ""
+        workflow._project_snapshot = Mock(
+            return_value={"acceptedCreatorCount": 0}
+        )
+        row = Mock()
+        project_name = Mock()
+        workflow._unique_row_with_text = Mock(return_value=row)
+        workflow._project_name_click_target = Mock(
+            return_value=project_name
+        )
+        workflow._click = Mock()
+        workflow._wait = Mock(
+            return_value={
+                "handle": "project-detail",
+                "currentUrl": "https://example.test/project/detail",
+            }
+        )
+        workflow._ensure_creator_details_expanded = Mock(
+            return_value=False
+        )
+        workflow._visible_rows = Mock(return_value=[])
+
+        result = workflow.open_project_accepted_creators(
+            "金色拉链+短裤13",
+            "7664550207413847821",
+        )
+
+        workflow._project_name_click_target.assert_called_once_with(
+            row,
+            "金色拉链+短裤13",
+        )
+        workflow._click.assert_called_once_with(project_name)
+        self.assertTrue(result.success)
+        self.assertEqual(result.evidence["acceptedCreatorCount"], 0)
 
     def test_chat_icon_then_recent_contact_are_both_clicked(self) -> None:
         workflow = self._ready_workflow()

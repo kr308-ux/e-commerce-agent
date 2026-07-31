@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlparse
 from selenium.common.exceptions import (
     ElementClickInterceptedException,
     StaleElementReferenceException,
+    TimeoutException,
 )
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -40,6 +41,7 @@ APPROVED_GREETING_MESSAGE = (
     "Accept it in your TikTok dashboard to get your products ASAP 🚀\n"
     "Let’s partner long term and make great content together! 🤩"
 )
+TARGET_COLLABORATION_RECOVERY_WAIT_SECONDS = 3.0
 
 FIND_CREATORS_RENDER_WAIT_SECONDS = 3.0
 
@@ -156,6 +158,8 @@ class CreatorContactWorkflow:
         self._creator_detail_url: str | None = None
         self._chat_handle: str | None = None
         self._cdp_click_recovery_count = 0
+        self._model_fallback_enabled = False
+        self._target_collaboration_refresh_attempted = False
 
     def _wait(
         self,
@@ -507,6 +511,12 @@ class CreatorContactWorkflow:
                         "arguments[0].click();",
                         target,
                     )
+                if self.dom_fallback is not None:
+                    try:
+                        self.dom_fallback.record_interaction_success(target)
+                    except Exception:
+                        # Persistence is an optimization, never action authority.
+                        pass
                 return
             except StaleElementReferenceException as error:
                 last_stale = error
@@ -519,12 +529,95 @@ class CreatorContactWorkflow:
             "点击前目标连续重绘，CDP 有限重试后仍无法安全定位。"
         ) from last_stale
 
-    def _refresh_page(self) -> float:
-        """Refresh once, always respecting the 5–8 second page interval."""
-        wait_seconds = self._random_pause(5.0, 8.0, refresh=True)
+    def _refresh_page(
+        self,
+        *,
+        fixed_wait_seconds: float | None = None,
+    ) -> float:
+        """Refresh once after either the normal interval or an explicit wait."""
+        if fixed_wait_seconds is None:
+            wait_seconds = self._random_pause(5.0, 8.0, refresh=True)
+        else:
+            wait_seconds = float(fixed_wait_seconds)
+            self._refresh_wait_seconds.append(wait_seconds)
+            time.sleep(wait_seconds)
         self.driver.refresh()
         self._wait_for_document()
         return wait_seconds
+
+    def set_model_fallback_enabled(self, enabled: bool) -> None:
+        """Allow a live model call only in the explicit fallback state."""
+        self._model_fallback_enabled = bool(enabled)
+
+    def recover_for_retry(self, tool_name: str) -> dict[str, Any]:
+        """Restore the last verified browser checkpoint for one safe retry."""
+        checkpoint_by_tool = {
+            "ziniao_search_creator": (
+                self._find_creators_handle,
+                self._find_creators_url,
+            ),
+            "ziniao_open_creator_detail": (
+                self._find_creators_handle,
+                self._find_creators_url,
+            ),
+            "ziniao_open_message_panel": (
+                self._creator_detail_handle,
+                self._creator_detail_url,
+            ),
+            "ziniao_open_chat_new_tab": (
+                self._creator_detail_handle,
+                self._creator_detail_url,
+            ),
+            "ziniao_verify_chat_recipient": (
+                self._chat_handle,
+                "",
+            ),
+            "ziniao_open_target_collaboration": (
+                self._chat_handle,
+                "",
+            ),
+            "ziniao_open_other_invitation_dialog": (
+                self._chat_handle,
+                "",
+            ),
+            "ziniao_select_invitation": (
+                self._chat_handle,
+                "",
+            ),
+        }
+        if tool_name == "ziniao_open_find_creators":
+            restored = (
+                self._activate_existing_find_creators()
+                or self._activate_available_store_page()
+            )
+            if not restored:
+                raise ZiniaoWorkflowError(
+                    "无法恢复到已打开的店铺或查找达人页面。"
+                )
+            return {
+                "checkpoint": "store-or-find-creators",
+                "currentUrl": self.driver.current_url,
+            }
+        handle, expected_url = checkpoint_by_tool.get(
+            tool_name,
+            (None, ""),
+        )
+        handles = set(self.driver.window_handles)
+        if not handle or handle not in handles:
+            raise ZiniaoWorkflowError(
+                f"{tool_name} 的上一成功窗口检查点已经失效。"
+            )
+        self.driver.switch_to.window(handle)
+        current_url = str(self.driver.current_url or "")
+        if expected_url and current_url != expected_url:
+            self.driver.get(expected_url)
+            self._wait_for_document()
+            current_url = str(self.driver.current_url or "")
+        return {
+            "checkpoint": tool_name,
+            "handle": handle,
+            "currentUrl": current_url,
+        }
 
     def _first_clickable(
         self,
@@ -534,6 +627,15 @@ class CreatorContactWorkflow:
         timeout_seconds: int | None = None,
     ) -> WebElement:
         selector_list = tuple(selectors)
+        persisted_attempt = (
+            self.dom_fallback.begin_persisted_attempt(
+                self.driver,
+                purpose=missing_message,
+                attempted_selectors=selector_list,
+            )
+            if self.dom_fallback is not None
+            else None
+        )
 
         def find(driver: WebDriver) -> WebElement | bool:
             for by, value in selector_list:
@@ -543,6 +645,13 @@ class CreatorContactWorkflow:
                             return element
                     except StaleElementReferenceException:
                         continue
+            if self.dom_fallback is not None:
+                persisted = self.dom_fallback.probe_persisted(
+                    driver,
+                    persisted_attempt,
+                )
+                if persisted is not None:
+                    return persisted
             return False
 
         try:
@@ -551,13 +660,21 @@ class CreatorContactWorkflow:
                 message=missing_message,
                 timeout_seconds=timeout_seconds,
             )
-        except ZiniaoWorkflowError:
+        except ZiniaoWorkflowError as wait_error:
             recovered: WebElement | None = None
-            if self.dom_fallback is not None:
+            if (
+                self.dom_fallback is not None
+                and self._model_fallback_enabled
+            ):
+                if isinstance(wait_error.__cause__, TimeoutException):
+                    self.dom_fallback.finalize_persisted_timeout(
+                        persisted_attempt
+                    )
                 recovered = self.dom_fallback.locate(
                     self.driver,
                     purpose=missing_message,
                     attempted_selectors=selector_list,
+                    include_persisted=False,
                 )
             late_local_match = find(self.driver)
             if late_local_match is not False:
@@ -597,7 +714,11 @@ class CreatorContactWorkflow:
             "currentUrl": self.driver.current_url,
             "title": self.driver.title,
             "iframeCount": frame_count,
-            "domOnlyDiagnostics": True,
+            "adaptiveLocatorStages": [
+                "persisted_recipe",
+                "accessibility_tree",
+                "dom_candidates",
+            ],
         }
 
     def _window_targets(self) -> dict[str, dict[str, str]]:
@@ -2343,6 +2464,24 @@ class CreatorContactWorkflow:
             ),
         )
 
+    def _active_target_collaboration_tab(
+        self,
+    ) -> WebElement | None:
+        """Resolve the tab once per poll so React redraws stay recoverable."""
+        try:
+            tab = self._target_collaboration_tab()
+            return (
+                tab
+                if (
+                    tab.get_attribute("aria-selected") == "true"
+                    or "active"
+                    in (tab.get_attribute("class") or "").lower()
+                )
+                else None
+            )
+        except (StaleElementReferenceException, ZiniaoWorkflowError):
+            return None
+
     def open_target_collaboration(
         self,
         creator: str,
@@ -2363,23 +2502,46 @@ class CreatorContactWorkflow:
             self._click(tab)
         active_tab = self._wait(
             lambda _driver: (
-                self._target_collaboration_tab()
-                if (
-                    self._target_collaboration_tab().get_attribute(
-                        "aria-selected"
-                    )
-                    == "true"
-                    or "active"
-                    in (
-                        self._target_collaboration_tab().get_attribute("class")
-                        or ""
-                    ).lower()
-                )
-                else False
+                self._active_target_collaboration_tab() or False
             ),
             message="第 8 步验收失败：“定向合作”页签未激活。",
         )
-        other_button = self._other_invitation_button()
+        refresh_wait_seconds = 0.0
+        try:
+            other_button = self._other_invitation_button()
+        except ZiniaoWorkflowError as error:
+            if (
+                self._target_collaboration_refresh_attempted
+                or "发送其他邀请开展合作" not in str(error)
+            ):
+                raise
+            self._target_collaboration_refresh_attempted = True
+            self._require_verified_recipient(creator, creator_id)
+            refresh_wait_seconds = self._refresh_page(
+                fixed_wait_seconds=(
+                    TARGET_COLLABORATION_RECOVERY_WAIT_SECONDS
+                )
+            )
+            recipient = self._require_verified_recipient(
+                creator,
+                creator_id,
+            )
+            tab = self._target_collaboration_tab()
+            if not (
+                tab.get_attribute("aria-selected") == "true"
+                or "active"
+                in (tab.get_attribute("class") or "").lower()
+            ):
+                self._click(tab)
+            active_tab = self._wait(
+                lambda _driver: (
+                    self._active_target_collaboration_tab() or False
+                ),
+                message=(
+                    "刷新后“定向合作”页签未重新激活。"
+                ),
+            )
+            other_button = self._other_invitation_button()
         self._target_collaboration_verified = True
         return WorkflowStepResult(
             step=8,
@@ -2392,6 +2554,12 @@ class CreatorContactWorkflow:
                 "targetCollaborationActive": True,
                 "otherInvitationButtonVisible": self._is_visible(
                     other_button
+                ),
+                "targetCollaborationRefreshAttempted": (
+                    refresh_wait_seconds > 0
+                ),
+                "targetCollaborationRefreshWaitSeconds": (
+                    refresh_wait_seconds
                 ),
                 "invitationSent": False,
             },
@@ -2435,12 +2603,17 @@ class CreatorContactWorkflow:
             raise ZiniaoWorkflowError(
                 "第 9 步前置验收失败：定向合作页尚未验收。"
             )
-        self._click(self._other_invitation_button())
         try:
-            modal = self._wait(
-                lambda _driver: self._visible_invitation_modal(creator),
-                message="第 9 步失败：邀请选择弹窗未打开。",
-            )
+            modal = self._visible_invitation_modal(creator)
+            dialog_already_open = bool(modal)
+            if not modal:
+                self._click(self._other_invitation_button())
+                modal = self._wait(
+                    lambda _driver: self._visible_invitation_modal(
+                        creator
+                    ),
+                    message="第 9 步失败：邀请选择弹窗未打开。",
+                )
             current_tab = self._first_clickable(
                 (
                     (
@@ -2475,6 +2648,7 @@ class CreatorContactWorkflow:
                 **recipient,
                 "dialogTitle": f"邀请 @{recipient['creatorHandle']} 合作",
                 "dialogTargetMatched": True,
+                "dialogAlreadyOpen": dialog_already_open,
                 "inProgressTabVisible": self._is_visible(current_tab),
                 "createInvitationTabVisible": any(
                     self._is_visible(tab) for tab in create_tabs

@@ -7,6 +7,11 @@ app_name = "tasks"
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
+    path(
+        "outreach-records/",
+        views.outreach_records,
+        name="outreach-records",
+    ),
     path("creator-data/", views.creator_data, name="creator-data"),
     path("imports/preview/", views.preview_import, name="import-preview"),
     path(

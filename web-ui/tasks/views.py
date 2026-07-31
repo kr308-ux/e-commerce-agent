@@ -17,6 +17,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 
 from creator_contact.models import ContactedCreator, CreatorContactTask
 from mailing.models import EmailDelivery
+from mailing.services.retry import failed_today_queryset
 
 from .models import (
     Creator,
@@ -25,6 +26,7 @@ from .models import (
 )
 from .services.ai_rule_advisor import RuleAdvisorError
 from .services.import_runner import cleanup_task_source, save_confirmed_source
+from .services.outreach_records import build_outreach_records_context
 from .services.preview_service import (
     create_preview,
     preview_payload,
@@ -162,6 +164,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         "email_pending": EmailDelivery.objects.filter(
             status=EmailDelivery.Status.PENDING
         ).count(),
+        "email_failed_today": failed_today_queryset().count(),
         "email_total": EmailDelivery.objects.filter(
             status=EmailDelivery.Status.SENT
         ).count(),
@@ -180,7 +183,25 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             else None
         ),
     }
+    context.update(
+        build_outreach_records_context(
+            request.GET,
+            store_id=store_id,
+        )
+    )
     return render(request, "tasks/dashboard.html", context)
+
+
+@require_GET
+def outreach_records(request: HttpRequest) -> HttpResponse:
+    store_id = str(
+        getattr(settings, "ZINIAO_CONTACT_STORE_ID", "") or ""
+    ).strip()
+    context = build_outreach_records_context(
+        request.GET,
+        store_id=store_id,
+    )
+    return render(request, "tasks/_outreach_records.html", context)
 
 
 @require_GET

@@ -42,3 +42,5 @@ class Command(BaseCommand):
             )
             if options["once"]:
                 return
+            if result.status == CollaborationSyncJob.Status.PENDING:
+                time.sleep(options["poll_interval"])

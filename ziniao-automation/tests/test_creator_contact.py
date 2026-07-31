@@ -3,7 +3,10 @@ from __future__ import annotations
 import unittest
 from unittest.mock import Mock, patch
 
-from selenium.common.exceptions import StaleElementReferenceException
+from selenium.common.exceptions import (
+    StaleElementReferenceException,
+    TimeoutException,
+)
 from selenium.webdriver.common.by import By
 
 from ziniao_automation.actions.creator_contact import (
@@ -78,6 +81,78 @@ class CreatorContactWorkflowTests(unittest.TestCase):
         driver.refresh.assert_called_once_with()
         workflow._wait_for_document.assert_called_once_with()
         self.assertEqual(workflow._refresh_wait_seconds, [6.75])
+
+    def test_target_collaboration_recovery_refresh_waits_three_seconds(
+        self,
+    ) -> None:
+        driver = Mock()
+        workflow = CreatorContactWorkflow(driver)
+        workflow._wait_for_document = Mock()
+
+        with patch(
+            "ziniao_automation.actions.creator_contact.time.sleep"
+        ) as sleep:
+            waited = workflow._refresh_page(fixed_wait_seconds=3.0)
+
+        self.assertEqual(waited, 3.0)
+        sleep.assert_called_once_with(3.0)
+        driver.refresh.assert_called_once_with()
+        self.assertEqual(workflow._refresh_wait_seconds, [3.0])
+
+    def test_missing_other_invitation_refreshes_once_then_rechecks(
+        self,
+    ) -> None:
+        driver = Mock()
+        workflow = CreatorContactWorkflow(driver)
+        workflow._greeting_delivery_verified = True
+        recipient = {
+            "creatorHandle": "creator",
+            "creatorId": "7493994012378827459",
+        }
+        workflow._require_verified_recipient = Mock(
+            return_value=recipient
+        )
+        tab = Mock()
+        tab.text = "定向合作"
+        tab.get_attribute.side_effect = lambda name: (
+            "true" if name == "aria-selected" else ""
+        )
+        workflow._target_collaboration_tab = Mock(return_value=tab)
+        workflow._wait = Mock(return_value=tab)
+        button = Mock()
+        workflow._other_invitation_button = Mock(
+            side_effect=[
+                ZiniaoWorkflowError(
+                    "第 8 步失败：定向合作页未找到"
+                    "“发送其他邀请开展合作”。"
+                ),
+                button,
+            ]
+        )
+        workflow._refresh_page = Mock(return_value=3.0)
+        workflow._is_visible = Mock(return_value=True)
+
+        result = workflow.open_target_collaboration(
+            "@creator",
+            "7493994012378827459",
+        )
+
+        workflow._refresh_page.assert_called_once_with(
+            fixed_wait_seconds=3.0
+        )
+        self.assertEqual(
+            workflow._other_invitation_button.call_count,
+            2,
+        )
+        self.assertTrue(
+            result.evidence["targetCollaborationRefreshAttempted"]
+        )
+        self.assertEqual(
+            result.evidence[
+                "targetCollaborationRefreshWaitSeconds"
+            ],
+            3.0,
+        )
 
     def test_click_refinds_same_unique_target_after_react_redraw(
         self,
@@ -154,6 +229,38 @@ class CreatorContactWorkflowTests(unittest.TestCase):
 
         element.click.assert_called_once_with()
         driver.execute_cdp_cmd.assert_not_called()
+
+    def test_click_commits_healed_locator_only_after_success(self) -> None:
+        driver = Mock()
+        element = Mock()
+        fallback = Mock()
+        workflow = CreatorContactWorkflow(
+            driver,
+            dom_fallback=fallback,
+        )
+
+        with patch.object(workflow, "_random_pause", return_value=1.0):
+            workflow._click(element)
+
+        element.click.assert_called_once_with()
+        fallback.record_interaction_success.assert_called_once_with(element)
+
+    def test_cache_write_failure_does_not_change_click_success(self) -> None:
+        driver = Mock()
+        element = Mock()
+        fallback = Mock()
+        fallback.record_interaction_success.side_effect = OSError(
+            "cache unavailable"
+        )
+        workflow = CreatorContactWorkflow(
+            driver,
+            dom_fallback=fallback,
+        )
+
+        with patch.object(workflow, "_random_pause", return_value=1.0):
+            workflow._click(element)
+
+        element.click.assert_called_once_with()
 
     def test_click_revalidates_target_after_random_wait(self) -> None:
         driver = Mock()
@@ -782,14 +889,18 @@ class CreatorContactWorkflowTests(unittest.TestCase):
         driver.find_elements.return_value = []
         recovered = Mock()
         fallback = Mock()
+        attempt = object()
+        fallback.begin_persisted_attempt.return_value = attempt
+        fallback.probe_persisted.return_value = None
         fallback.locate.return_value = recovered
         workflow = CreatorContactWorkflow(
             driver,
             dom_fallback=fallback,
         )
-        workflow._wait = Mock(
-            side_effect=ZiniaoWorkflowError("未找到搜索框")
-        )
+        workflow.set_model_fallback_enabled(True)
+        timeout_error = ZiniaoWorkflowError("未找到搜索框")
+        timeout_error.__cause__ = TimeoutException()
+        workflow._wait = Mock(side_effect=timeout_error)
 
         result = workflow._first_clickable(
             ((By.CSS_SELECTOR, "input.old-selector"),),
@@ -798,6 +909,12 @@ class CreatorContactWorkflowTests(unittest.TestCase):
 
         self.assertIs(result, recovered)
         fallback.locate.assert_called_once()
+        fallback.finalize_persisted_timeout.assert_called_once_with(
+            attempt
+        )
+        self.assertFalse(
+            fallback.locate.call_args.kwargs["include_persisted"]
+        )
 
     def test_first_clickable_rechecks_original_selectors_after_fallback(
         self,
@@ -808,14 +925,17 @@ class CreatorContactWorkflowTests(unittest.TestCase):
         late_element.is_enabled.return_value = True
         driver.find_elements.return_value = [late_element]
         fallback = Mock()
+        attempt = object()
+        fallback.begin_persisted_attempt.return_value = attempt
         fallback.locate.return_value = None
         workflow = CreatorContactWorkflow(
             driver,
             dom_fallback=fallback,
         )
-        workflow._wait = Mock(
-            side_effect=ZiniaoWorkflowError("未出现精确候选")
-        )
+        workflow.set_model_fallback_enabled(True)
+        timeout_error = ZiniaoWorkflowError("未出现精确候选")
+        timeout_error.__cause__ = TimeoutException()
+        workflow._wait = Mock(side_effect=timeout_error)
 
         result = workflow._first_clickable(
             ((By.CSS_SELECTOR, ".exact-creator"),),
@@ -825,13 +945,106 @@ class CreatorContactWorkflowTests(unittest.TestCase):
 
         self.assertIs(result, late_element)
         fallback.locate.assert_called_once()
+        fallback.finalize_persisted_timeout.assert_called_once_with(
+            attempt
+        )
+
+    def test_non_timeout_wait_error_does_not_penalize_recipe(
+        self,
+    ) -> None:
+        driver = Mock()
+        driver.find_elements.return_value = []
+        recovered = Mock()
+        fallback = Mock()
+        attempt = object()
+        fallback.begin_persisted_attempt.return_value = attempt
+        fallback.probe_persisted.return_value = None
+        fallback.locate.return_value = recovered
+        workflow = CreatorContactWorkflow(
+            driver,
+            dom_fallback=fallback,
+        )
+        workflow.set_model_fallback_enabled(True)
+        driver_error = ZiniaoWorkflowError("浏览器连接中断")
+        driver_error.__cause__ = RuntimeError("disconnected")
+        workflow._wait = Mock(side_effect=driver_error)
+
+        result = workflow._first_clickable(
+            ((By.CSS_SELECTOR, "button.old"),),
+            missing_message="未找到发送按钮",
+        )
+
+        self.assertIs(result, recovered)
+        fallback.finalize_persisted_timeout.assert_not_called()
+
+    def test_first_clickable_polls_persisted_recipe_inside_wait(
+        self,
+    ) -> None:
+        driver = Mock()
+        driver.find_elements.return_value = []
+        recovered = Mock()
+        fallback = Mock()
+        attempt = object()
+        fallback.begin_persisted_attempt.return_value = attempt
+        fallback.probe_persisted.return_value = recovered
+        workflow = CreatorContactWorkflow(
+            driver,
+            dom_fallback=fallback,
+        )
+        workflow._wait = Mock(
+            side_effect=lambda condition, **_kwargs: condition(driver)
+        )
+
+        result = workflow._first_clickable(
+            ((By.CSS_SELECTOR, "button.old"),),
+            missing_message="未找到发送按钮",
+        )
+
+        self.assertIs(result, recovered)
+        workflow._wait.assert_called_once()
+        fallback.probe_persisted.assert_called_once_with(driver, attempt)
+        fallback.finalize_persisted_timeout.assert_not_called()
+        fallback.locate.assert_not_called()
+
+    def test_slow_persisted_recipe_render_is_not_finalized_as_failure(
+        self,
+    ) -> None:
+        driver = Mock()
+        driver.find_elements.return_value = []
+        recovered = Mock()
+        fallback = Mock()
+        attempt = object()
+        fallback.begin_persisted_attempt.return_value = attempt
+        fallback.probe_persisted.side_effect = [None, recovered]
+        workflow = CreatorContactWorkflow(
+            driver,
+            dom_fallback=fallback,
+        )
+
+        def wait_for_second_poll(condition, **_kwargs):
+            self.assertFalse(condition(driver))
+            return condition(driver)
+
+        workflow._wait = Mock(side_effect=wait_for_second_poll)
+
+        result = workflow._first_clickable(
+            ((By.CSS_SELECTOR, "button.old"),),
+            missing_message="未找到发送按钮",
+        )
+
+        self.assertIs(result, recovered)
+        self.assertEqual(fallback.probe_persisted.call_count, 2)
+        fallback.finalize_persisted_timeout.assert_not_called()
+        fallback.locate.assert_not_called()
 
     def test_first_clickable_does_not_call_model_on_normal_path(
         self,
     ) -> None:
         driver = Mock()
+        driver.find_elements.return_value = []
         deterministic_element = Mock()
         fallback = Mock()
+        fallback.begin_persisted_attempt.return_value = None
         workflow = CreatorContactWorkflow(
             driver,
             dom_fallback=fallback,

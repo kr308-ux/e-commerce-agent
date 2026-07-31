@@ -213,6 +213,7 @@ class CreatorContactTarget(models.Model):
         SUCCESS = "SUCCESS", "已完成"
         FAILED = "FAILED", "失败"
         SKIPPED = "SKIPPED", "已跳过"
+        REVIEW_REQUIRED = "REVIEW_REQUIRED", "需人工复核"
 
     task = models.ForeignKey(
         CreatorContactTask,
@@ -268,12 +269,22 @@ class CreatorContactTarget(models.Model):
     error_code = models.CharField(max_length=100, blank=True)
     error_message = models.TextField(blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
-    finished_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["rank"]
+        indexes = [
+            models.Index(
+                fields=["status", "-finished_at"],
+                name="contact_status_date_idx",
+            ),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=["task", "normalized_handle"],
@@ -294,6 +305,11 @@ class CreatorContactTarget(models.Model):
             self.creator_handle_snapshot or normalized
         ).strip().lstrip("@")
         super().save(*args, **kwargs)
+
+    @property
+    def imported_creator_id(self) -> str:
+        """Return the frozen imported ID used by Find Creators."""
+        return self.creator_handle_snapshot
 
     def __str__(self) -> str:
         return f"@{self.normalized_handle} · {self.get_status_display()}"
@@ -342,7 +358,7 @@ class CreatorContactTaskStep(models.Model):
 
 class ContactedCreator(models.Model):
     store_id = models.CharField(max_length=80, db_index=True)
-    normalized_handle = models.CharField(max_length=160)
+    normalized_handle = models.CharField(max_length=160, db_index=True)
     creator_handle = models.CharField(max_length=160)
     chat_creator_id = models.CharField(max_length=40, blank=True)
     creator = models.ForeignKey(
@@ -363,11 +379,17 @@ class ContactedCreator(models.Model):
     invitation_id = models.CharField(max_length=128)
     invitation_name = models.CharField(max_length=255)
     evidence = models.JSONField(default=dict, blank=True)
-    contacted_at = models.DateTimeField(auto_now=True)
+    contacted_at = models.DateTimeField(auto_now=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["-contacted_at"]
+        indexes = [
+            models.Index(
+                fields=["store_id", "-contacted_at"],
+                name="contact_store_date_idx",
+            ),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=["store_id", "normalized_handle"],

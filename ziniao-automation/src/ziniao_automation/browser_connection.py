@@ -67,8 +67,10 @@ class ReusableStoreConnection:
 def connect_reusable_store(
     settings: ZiniaoSettings,
     store_id: str,
+    *,
+    allow_start: bool = True,
 ) -> ReusableStoreConnection:
-    """Attach to a live cached store browser, starting only on cache miss."""
+    """Attach to a live cached browser; optionally start only on cache miss."""
     requested_store_id = str(store_id or "").strip()
     manager = ZiniaoProcessManager(settings)
     manager.ensure_started(restart=False)
@@ -98,6 +100,11 @@ def connect_reusable_store(
             connection_mode = "reused"
             cache_persisted = True
         else:
+            if not allow_start:
+                raise ZiniaoConnectionError(
+                    "当前店铺没有可复用的已打开浏览器会话；"
+                    "同步 Worker 不会重新打开浏览器。"
+                )
             session.connect()
             if settings.reuse_browser_session:
                 assert session.started is not None

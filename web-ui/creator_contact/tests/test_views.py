@@ -55,6 +55,10 @@ class CreatorContactViewTests(CreatorContactTestCase):
         self.assertContains(dashboard, "达人选择")
         self.assertNotContains(dashboard, "选择导入批次与高销售额达人")
         self.assertContains(dashboard, "总销售额")
+        self.assertContains(dashboard, "Highest Creator")
+        self.assertContains(dashboard, "达人 ID：Highest")
+        self.assertContains(dashboard, "达人 ID：Middle")
+        self.assertNotContains(dashboard, "达人 ID：@Middle")
         self.assertNotContains(dashboard, "确认全部远端发送操作")
         self.assertEqual(detail.status_code, 200)
         self.assertContains(detail, "目标达人执行状态")
@@ -85,8 +89,12 @@ class CreatorContactViewTests(CreatorContactTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
+            [row["creatorId"] for row in response.json()["creators"]],
+            ["Highest", "Middle"],
+        )
+        self.assertEqual(
             [row["creatorHandle"] for row in response.json()["creators"]],
-            ["highest", "middle"],
+            ["Highest", "Middle"],
         )
 
     def test_candidates_supports_creator_id_auto_select_and_manual_rules(self):
@@ -107,8 +115,8 @@ class CreatorContactViewTests(CreatorContactTestCase):
 
         self.assertEqual(by_id.status_code, 200)
         self.assertEqual(
-            [row["creatorHandle"] for row in by_id.json()["creators"]],
-            ["highest", "middle", "low", "null_revenue"],
+            [row["creatorId"] for row in by_id.json()["creators"]],
+            ["Highest", "Middle", "low", "null_revenue"],
         )
         self.assertEqual(by_id.json()["requestedCount"], 50)
         self.assertEqual(manual.status_code, 200)
