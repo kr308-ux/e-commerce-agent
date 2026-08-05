@@ -8,6 +8,20 @@ import sys
 from collections.abc import Callable
 
 
+def _configure_utf8_console() -> None:
+    """Keep Chinese status output safe on non-Chinese Windows consoles."""
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not callable(reconfigure):
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            # Redirected/frozen streams are not always reconfigurable.
+            continue
+
+
 def _run_manage(arguments: list[str]) -> int:
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
     from django.core.management import execute_from_command_line
@@ -24,6 +38,7 @@ def _run_module(
 
 
 def main(argv: list[str] | None = None) -> int:
+    _configure_utf8_console()
     multiprocessing.freeze_support()
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments and arguments[0] == "--internal-manage":

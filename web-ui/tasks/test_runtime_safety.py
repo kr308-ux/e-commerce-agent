@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import importlib.util
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -82,6 +83,40 @@ class LogCleanupTests(SimpleTestCase):
 
 
 class RuntimePrimitiveTests(SimpleTestCase):
+    def test_windows_entrypoint_reconfigures_console_as_utf8(self) -> None:
+        entrypoint_path = (
+            Path(__file__).resolve().parents[2]
+            / "packaging"
+            / "windows_entrypoint.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "ecommerce_windows_entrypoint_test",
+            entrypoint_path,
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        stdout = Mock()
+        stderr = Mock()
+
+        with patch.object(module.sys, "stdout", stdout), patch.object(
+            module.sys,
+            "stderr",
+            stderr,
+        ), patch.dict(module.os.environ, {}, clear=True):
+            module._configure_utf8_console()
+            self.assertEqual(module.os.environ["PYTHONIOENCODING"], "utf-8")
+
+        stdout.reconfigure.assert_called_once_with(
+            encoding="utf-8",
+            errors="replace",
+        )
+        stderr.reconfigure.assert_called_once_with(
+            encoding="utf-8",
+            errors="replace",
+        )
+
     def test_frozen_paths_split_writable_home_and_resources(self) -> None:
         with patch.object(
             runtime_paths.sys,
