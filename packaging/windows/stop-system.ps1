@@ -1,4 +1,13 @@
+param(
+    [switch]$ValidateEncoding
+)
+
 $ErrorActionPreference = "Stop"
+
+if ($ValidateEncoding) {
+    Write-Host "Windows PowerShell script encoding validation passed."
+    exit 0
+}
 
 $AppHome = Split-Path -Parent $PSScriptRoot
 $Executable = (Join-Path $AppHome "EcommerceAgent.exe").ToLowerInvariant()

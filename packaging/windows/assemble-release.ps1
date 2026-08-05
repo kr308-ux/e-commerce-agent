@@ -53,9 +53,28 @@ foreach ($ScriptName in @(
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $ScriptName) `
         -Destination (Join-Path $ApplicationHome $ScriptName)
 }
+$Utf8WithBom = New-Object System.Text.UTF8Encoding($true)
+$WindowsPowerShell = Join-Path `
+    $env:SystemRoot `
+    "System32\WindowsPowerShell\v1.0\powershell.exe"
+if (-not (Test-Path -LiteralPath $WindowsPowerShell -PathType Leaf)) {
+    throw "未找到 Windows PowerShell 5.1，无法验证客户机脚本兼容性。"
+}
 foreach ($ToolName in @("first-config.ps1", "stop-system.ps1")) {
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot $ToolName) `
-        -Destination (Join-Path $ApplicationHome "tools\$ToolName")
+    $ToolSource = Join-Path $PSScriptRoot $ToolName
+    $ToolDestination = Join-Path $ApplicationHome "tools\$ToolName"
+    $ToolContent = [IO.File]::ReadAllText($ToolSource, [Text.Encoding]::UTF8)
+    [IO.File]::WriteAllText($ToolDestination, $ToolContent, $Utf8WithBom)
+
+    & $WindowsPowerShell `
+        -NoLogo `
+        -NoProfile `
+        -ExecutionPolicy Bypass `
+        -File $ToolDestination `
+        -ValidateEncoding
+    if ($LASTEXITCODE -ne 0) {
+        throw "Windows PowerShell 5.1 无法解析交付脚本：$ToolName"
+    }
 }
 
 $OpenCodeExecutable = Get-ChildItem `
