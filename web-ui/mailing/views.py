@@ -11,6 +11,7 @@ from django.http import (
     JsonResponse,
 )
 from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import (
@@ -467,6 +468,49 @@ def retry_failed_deliveries(request: HttpRequest) -> HttpResponse:
         f"&retry_started={1 if sender_started else 0}"
     )
     return redirect(f"{reverse('mailing:dashboard')}{query}")
+
+
+@require_POST
+def confirm_uncertain_delivery_sent(
+    request: HttpRequest,
+    delivery_id: int,
+) -> HttpResponse:
+    delivery = get_object_or_404(EmailDelivery, pk=delivery_id)
+    if delivery.status == EmailDelivery.Status.UNCERTAIN:
+        now = timezone.now()
+        delivery.status = EmailDelivery.Status.SENT
+        delivery.retryable = False
+        delivery.sent_at = delivery.sent_at or now
+        delivery.error_code = ""
+        delivery.error_message = ""
+        delivery.next_retry_at = None
+        delivery.save()
+        delivery.attempts.filter(
+            status=EmailDeliveryAttempt.Status.UNCERTAIN
+        ).update(
+            status=EmailDeliveryAttempt.Status.SENT,
+            error_code="",
+            error_message="",
+            finished_at=now,
+        )
+    return redirect(f"{reverse('mailing:dashboard')}#delivery-{delivery_id}")
+
+
+@require_POST
+def retry_uncertain_delivery(
+    request: HttpRequest,
+    delivery_id: int,
+) -> HttpResponse:
+    delivery = get_object_or_404(EmailDelivery, pk=delivery_id)
+    if delivery.status == EmailDelivery.Status.UNCERTAIN:
+        delivery.status = EmailDelivery.Status.PENDING
+        delivery.retryable = True
+        delivery.next_retry_at = None
+        delivery.error_code = ""
+        delivery.error_message = ""
+        delivery.save()
+        launch_email_sender()
+    return redirect(f"{reverse('mailing:dashboard')}#delivery-{delivery_id}")
 
 
 @require_POST

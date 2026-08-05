@@ -108,6 +108,7 @@ class EmailDelivery(models.Model):
         SENT = "SENT", "发送成功"
         FAILED = "FAILED", "发送失败"
         RETRY_WAITING = "RETRY_WAITING", "等待明日重试"
+        UNCERTAIN = "UNCERTAIN", "送达状态待确认"
         SKIPPED = "SKIPPED", "已跳过"
 
     creator = models.ForeignKey(
@@ -213,6 +214,7 @@ class EmailDeliveryAttempt(models.Model):
         STARTED = "STARTED", "发送中"
         SENT = "SENT", "发送成功"
         FAILED = "FAILED", "发送失败"
+        UNCERTAIN = "UNCERTAIN", "送达状态待确认"
 
     delivery = models.ForeignKey(
         EmailDelivery,
@@ -269,6 +271,7 @@ class EmailSendingService(models.Model):
         STOPPED = "STOPPED", "已停止"
         RUNNING = "RUNNING", "运行中"
         STOPPING = "STOPPING", "正在停止"
+        PAUSED = "PAUSED", "已暂停"
 
     id = models.PositiveSmallIntegerField(primary_key=True, default=1)
     status = models.CharField(

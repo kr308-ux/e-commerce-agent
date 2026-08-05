@@ -33,5 +33,15 @@ urlpatterns = [
         views.retry_failed_deliveries,
         name="retry_failed",
     ),
+    path(
+        "deliveries/<int:delivery_id>/confirm-sent/",
+        views.confirm_uncertain_delivery_sent,
+        name="confirm_uncertain_sent",
+    ),
+    path(
+        "deliveries/<int:delivery_id>/retry/",
+        views.retry_uncertain_delivery,
+        name="retry_uncertain",
+    ),
     path("service/stop/", views.stop_service, name="stop_service"),
 ]

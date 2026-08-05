@@ -344,6 +344,9 @@ class MailingDashboardTests(MailingTestCase):
             "mailing.services.launcher.email_sender_log_path",
             return_value=Path(directory) / "email-sender.log",
         ), patch(
+            "mailing.services.launcher.email_worker_endpoint_ready",
+            return_value=False,
+        ), patch(
             "mailing.services.launcher.subprocess.Popen",
         ) as popen, patch(
             "mailing.services.launcher.connection",
@@ -1063,5 +1066,5 @@ class SendCreatorEmailsCommandTests(MailingTestCase):
         self.assertEqual(second.status, EmailDelivery.Status.PENDING)
         self.assertEqual(
             service.status,
-            EmailSendingService.Status.STOPPED,
+            EmailSendingService.Status.PAUSED,
         )

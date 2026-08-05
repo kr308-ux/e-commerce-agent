@@ -464,6 +464,18 @@
                         {% else %}
                         <span class="delivery-muted">—</span>
                         {% endif %}
+                        {% if delivery.status == "UNCERTAIN" %}
+                        <div class="mail-uncertain-actions">
+                            <form method="post" action="{% url 'mailing:confirm_uncertain_sent' delivery.id %}">
+                                {% csrf_token %}
+                                <button class="secondary-button" type="submit">确认已发送</button>
+                            </form>
+                            <form method="post" action="{% url 'mailing:retry_uncertain' delivery.id %}">
+                                {% csrf_token %}
+                                <button class="secondary-button" type="submit">核对后重试</button>
+                            </form>
+                        </div>
+                        {% endif %}
                         {% if delivery.attempts.all %}
                         <details class="mail-attempt-history">
                             <summary>查看尝试记录</summary>

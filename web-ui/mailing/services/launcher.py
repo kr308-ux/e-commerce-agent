@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -12,10 +11,12 @@ from django.db import connection
 from django.utils import timezone
 
 from shared.logger import project_log_root
+from shared.processes import new_process_group_kwargs
 
 from mailing.models import EmailDelivery, EmailSendingService
 from mailing.services.retry import retry_available_queryset
-from mailing.services.runtime import get_service_state
+from mailing.services.runtime import get_service_state, resume_service
+from mailing.services.worker_runtime import email_worker_endpoint_ready
 
 
 def email_sender_log_path() -> Path:
@@ -28,7 +29,7 @@ def email_sender_log_path() -> Path:
     )
 
 
-def launch_email_sender() -> bool:
+def launch_email_sender(*, resume_paused: bool = True) -> bool:
     """Start the sender when pending work exists and it is not already active."""
     database_name = str(connection.settings_dict.get("NAME") or "")
     if database_name.startswith("file:memorydb_"):
@@ -41,7 +42,15 @@ def launch_email_sender() -> bool:
         or retry_available_queryset().exists()
     ):
         return False
-    service = get_service_state()
+    service = resume_service() if resume_paused else get_service_state()
+    if service.status == EmailSendingService.Status.PAUSED:
+        return False
+    if email_worker_endpoint_ready(
+        settings.EMAIL_WORKER_HOST,
+        settings.EMAIL_WORKER_PORT,
+    ):
+        # The persistent worker will observe the durable queue.
+        return True
     if service.status in {
         EmailSendingService.Status.RUNNING,
         EmailSendingService.Status.STOPPING,
@@ -59,10 +68,7 @@ def launch_email_sender() -> bool:
         "cwd": str(settings.BASE_DIR),
         "stdin": subprocess.DEVNULL,
     }
-    if os.name == "posix":
-        popen_kwargs["start_new_session"] = True
-    elif hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
-        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    popen_kwargs.update(new_process_group_kwargs())
 
     with log_path.open("ab") as log_file:
         popen_kwargs["stdout"] = log_file
