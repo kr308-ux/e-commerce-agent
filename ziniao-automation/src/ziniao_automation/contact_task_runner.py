@@ -21,7 +21,7 @@ from .mcp_server import ContactAutomationState
 
 
 DEFAULT_INVITATION_NAME = "金色拉链+短裤13"
-DEFAULT_FALLBACK_MODEL = "deepseek/deepseek-v4-pro"
+DEFAULT_FALLBACK_MODEL = "deepseek/deepseek-v4-flash"
 
 
 def normalize_greeting_message(value: object) -> str:

@@ -116,7 +116,9 @@ class ImportRuleAdvisor:
         )
         environment = os.environ.copy()
         command: list[str] = []
-        model_ref = "project-deepseek/deepseek-v4-pro"
+        configured_model = str(settings.IMPORT_RULE_MODEL or "").strip()
+        model_name = configured_model.rsplit("/", 1)[-1] or "deepseek-v4-pro"
+        model_ref = f"project-deepseek/{model_name}"
         started_at = time.perf_counter()
         try:
             with tempfile.TemporaryDirectory(
@@ -128,7 +130,7 @@ class ImportRuleAdvisor:
                     "provider": {
                         "project-deepseek": {
                             "models": {
-                                "deepseek-v4-pro": {"name": "DeepSeek V4 Pro"}
+                                model_name: {"name": model_name}
                             },
                             "npm": "@ai-sdk/openai-compatible",
                             "options": {

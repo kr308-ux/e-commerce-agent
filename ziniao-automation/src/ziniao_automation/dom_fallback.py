@@ -53,7 +53,7 @@ def _model_id(value: object) -> str:
     normalized = str(value or "").strip()
     if normalized.startswith("deepseek/"):
         return normalized.split("/", 1)[1]
-    return normalized or "deepseek-v4-pro"
+    return normalized or "deepseek-v4-flash"
 
 
 class DeepSeekDomFallback:
@@ -63,7 +63,7 @@ class DeepSeekDomFallback:
         self,
         *,
         api_key: str,
-        model: str = "deepseek-v4-pro",
+        model: str = "deepseek-v4-flash",
         base_url: str = "https://api.deepseek.com",
         timeout_seconds: float = 45,
         max_calls_per_step: int = 2,
@@ -118,7 +118,7 @@ class DeepSeekDomFallback:
             api_key=os.getenv("DEEPSEEK_API_KEY", ""),
             model=os.getenv(
                 "DOM_FALLBACK_MODEL",
-                "deepseek/deepseek-v4-pro",
+                "deepseek/deepseek-v4-flash",
             ),
             base_url=os.getenv(
                 "DEEPSEEK_API_BASE_URL",

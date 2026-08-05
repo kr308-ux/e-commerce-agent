@@ -12,6 +12,9 @@ PROJECT_ROOT = BASE_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 load_dotenv(PROJECT_ROOT / ".env")
+from shared.exceptions import install_exception_hooks
+
+install_exception_hooks(PROJECT_ROOT)
 project_venv_python = (
     PROJECT_ROOT
     / ".venv"
@@ -69,13 +72,20 @@ database_path = Path(database_setting)
 if not database_path.is_absolute():
     database_path = PROJECT_ROOT / database_path
 
+sqlite_options: dict[str, object] = {"timeout": 20}
+if os.getenv("SQLITE_ENABLE_WAL", "true").lower() == "true":
+    sqlite_options["init_command"] = (
+        "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;"
+    )
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": database_path,
-        "OPTIONS": {"timeout": 20},
+        "OPTIONS": sqlite_options,
     }
 }
+LOG_RETENTION_DAYS = int(os.getenv("LOG_RETENTION_DAYS", "14"))
 
 LANGUAGE_CODE = "zh-hans"
 TIME_ZONE = "Asia/Shanghai"
@@ -88,14 +98,14 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek/deepseek-v4-flash")
 DOM_FALLBACK_MODEL = os.getenv(
     "DOM_FALLBACK_MODEL",
-    "deepseek/deepseek-v4-pro",
+    "deepseek/deepseek-v4-flash",
 )
 DOM_FALLBACK_TIMEOUT_SECONDS = int(
     os.getenv("DOM_FALLBACK_TIMEOUT_SECONDS", "45")
 )
 IMPORT_RULE_MODEL = os.getenv(
     "IMPORT_RULE_MODEL",
-    "deepseek/deepseek-v4-pro",
+    "deepseek/deepseek-v4-flash",
 )
 OPENCODE_BINARY = os.getenv("OPENCODE_BINARY", "opencode")
 TASK_TIMEOUT_SECONDS = int(os.getenv("TASK_TIMEOUT_SECONDS", "1800"))
@@ -140,6 +150,14 @@ CREATOR_CONTACT_WORKER_PORT = int(
 CREATOR_CONTACT_WORKER_START_TIMEOUT_SECONDS = float(
     os.getenv("CREATOR_CONTACT_WORKER_START_TIMEOUT_SECONDS", "10")
 )
+EMAIL_WORKER_POLL_INTERVAL_SECONDS = float(
+    os.getenv("EMAIL_WORKER_POLL_INTERVAL_SECONDS", "2")
+)
+EMAIL_WORKER_HOST = os.getenv(
+    "EMAIL_WORKER_HOST",
+    "127.0.0.1",
+).strip()
+EMAIL_WORKER_PORT = int(os.getenv("EMAIL_WORKER_PORT", "16853"))
 ziniao_browser_status_setting = Path(
     os.getenv(
         "ZINIAO_BROWSER_STATUS_PATH",

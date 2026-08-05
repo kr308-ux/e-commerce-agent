@@ -124,6 +124,11 @@ class CreatorContactTask(models.Model):
         FAILED = "FAILED", "失败"
         CANCELLED = "CANCELLED", "已取消"
 
+    class EmailDispatchStatus(models.TextChoices):
+        PENDING = "PENDING", "等待邮件入队"
+        COMPLETED = "COMPLETED", "邮件入队完成"
+        FAILED = "FAILED", "邮件入队失败"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=160, default="联系达人")
     store_id = models.CharField(max_length=80, db_index=True)
@@ -180,10 +185,19 @@ class CreatorContactTask(models.Model):
     error_message = models.TextField(blank=True)
     model_name = models.CharField(
         max_length=100,
-        default="deepseek/deepseek-v4-pro",
+        default="deepseek/deepseek-v4-flash",
     )
     opencode_session_id = models.CharField(max_length=120, blank=True)
+    active_process_id = models.PositiveIntegerField(null=True, blank=True)
     final_summary = models.JSONField(default=dict, blank=True)
+    email_dispatch_status = models.CharField(
+        max_length=16,
+        choices=EmailDispatchStatus.choices,
+        default=EmailDispatchStatus.PENDING,
+        db_index=True,
+    )
+    email_dispatch_summary = models.JSONField(default=dict, blank=True)
+    email_dispatched_at = models.DateTimeField(null=True, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -200,6 +214,14 @@ class CreatorContactTask(models.Model):
 
     def __str__(self) -> str:
         return f"{self.name} · {self.top_n} 位达人"
+
+    @property
+    def review_required_count(self) -> int:
+        return sum(
+            1
+            for target in self.targets.all()
+            if target.status == CreatorContactTarget.Status.REVIEW_REQUIRED
+        )
 
 
 class CreatorContactTarget(models.Model):

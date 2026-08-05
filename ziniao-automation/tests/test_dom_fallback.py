@@ -147,7 +147,7 @@ class DeepSeekDomFallbackTests(unittest.TestCase):
         event = fallback.consume_events()[0]
         self.assertEqual(event["status"], "candidate_validated")
         self.assertEqual(event["candidateSource"], "dom")
-        self.assertEqual(event["model"], "deepseek-v4-pro")
+        self.assertEqual(event["model"], "deepseek-v4-flash")
         payload = fallback._request_json.call_args.kwargs["payload"]
         self.assertEqual(payload["candidates"][0]["candidateId"], "dom-001")
         self.assertNotIn("cssPath", payload["candidates"][0])
