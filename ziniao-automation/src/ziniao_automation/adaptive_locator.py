@@ -7,6 +7,7 @@ import json
 import re
 import sqlite3
 import uuid
+from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -151,7 +152,7 @@ class AdaptiveLocatorStore:
         return connection
 
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS locator_recipes (
@@ -230,7 +231,7 @@ class AdaptiveLocatorStore:
         page: str,
         target: str,
     ) -> list[LocatorRecipe]:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             rows = connection.execute(
                 """
                 SELECT * FROM locator_recipes
@@ -262,7 +263,7 @@ class AdaptiveLocatorStore:
     ) -> LocatorRecipe | None:
         now = _now_iso()
         locator_id = uuid.uuid4().hex
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
                 """
@@ -344,7 +345,7 @@ class AdaptiveLocatorStore:
         return self._recipe(row)
 
     def record_success(self, locator_id: str) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 UPDATE locator_recipes
@@ -362,7 +363,7 @@ class AdaptiveLocatorStore:
             )
 
     def record_structural_failure(self, locator_id: str) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 UPDATE locator_recipes
