@@ -14,6 +14,10 @@ New-Item -ItemType Directory -Path $SmokeRoot -Force | Out-Null
 Copy-Item -LiteralPath $BuiltApplication -Destination $SmokeRoot -Recurse
 $ApplicationHome = Join-Path $SmokeRoot "EcommerceAgent"
 $Executable = Join-Path $ApplicationHome "EcommerceAgent.exe"
+foreach ($Directory in @("storage", "logs", "temporary")) {
+    New-Item -ItemType Directory -Path (Join-Path $ApplicationHome $Directory) -Force |
+        Out-Null
+}
 
 $env:DJANGO_SECRET_KEY = "ci-smoke-only-not-a-business-secret"
 $env:DJANGO_DEBUG = "true"
