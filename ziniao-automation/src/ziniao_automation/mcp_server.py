@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from shared.logger import JsonlAuditLogger, project_log_root
+from shared.runtime_paths import APP_HOME
 
 from .actions.creator_contact import CreatorContactWorkflow
 from .browser_connection import (
@@ -429,7 +430,7 @@ class ContactAutomationState:
             os.getenv("ZINIAO_RUN_SESSION_ID", "").strip()
             or f"mcp_{uuid.uuid4().hex}"
         )
-        project_root = Path(__file__).resolve().parents[3]
+        project_root = APP_HOME
         self.audit_logger = JsonlAuditLogger(
             root=project_log_root(project_root),
             category="regular",

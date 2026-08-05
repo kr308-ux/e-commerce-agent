@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 
 from shared.logger import JsonlAuditLogger, project_log_root
+from shared.runtime_paths import APP_HOME
 
 from .cli import main as cli_main
 from .actions.creator_contact import APPROVED_GREETING_MESSAGE
@@ -330,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
         confirm_send_invitation=arguments.confirm_send_invitation,
     )
     session_id = f"opencode_{uuid.uuid4().hex}"
-    project_root = Path(__file__).resolve().parents[3]
+    project_root = APP_HOME
     model_logger = JsonlAuditLogger(
         root=project_log_root(project_root),
         category="model",

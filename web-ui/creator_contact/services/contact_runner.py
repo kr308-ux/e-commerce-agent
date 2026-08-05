@@ -6,7 +6,6 @@ import json
 import os
 import re
 import subprocess
-from pathlib import Path
 from typing import Any, Protocol
 
 from django.conf import settings
@@ -25,6 +24,11 @@ from creator_contact.services.subprocess_control import (
     TaskCancellationRequested,
     run_task_subprocess,
     task_cancellation_requested,
+)
+from shared.runtime_commands import (
+    automation_command,
+    automation_environment,
+    runtime_cwd,
 )
 
 
@@ -444,9 +448,7 @@ class SubprocessContactExecutor:
                 + "。为避免后台进程进入交互式凭据提示，任务已停止。"
             )
 
-        command = [
-            self.python_executable,
-            "-m",
+        command = automation_command(
             "ziniao_automation.contact_task_runner",
             "--task-id",
             f"{task.pk}:{target.pk}",
@@ -466,21 +468,15 @@ class SubprocessContactExecutor:
             "--confirm-send-invitation",
             "--model",
             task.model_name,
-        ]
-        environment = os.environ.copy()
-        package_src = Path(settings.PROJECT_ROOT) / "ziniao-automation" / "src"
-        prior_pythonpath = environment.get("PYTHONPATH", "")
-        environment["PYTHONPATH"] = (
-            str(package_src)
-            if not prior_pythonpath
-            else f"{package_src}{os.pathsep}{prior_pythonpath}"
+            python_executable=self.python_executable,
         )
+        environment = automation_environment()
 
         try:
             completed = run_task_subprocess(
                 task.pk,
                 command,
-                cwd=settings.PROJECT_ROOT,
+                cwd=runtime_cwd(),
                 env=environment,
                 timeout=self.timeout_seconds,
             )
@@ -817,9 +813,7 @@ class SubprocessCardExecutor:
                 + "、".join(missing)
                 + "。"
             )
-        command = [
-            self.python_executable,
-            "-m",
+        command = automation_command(
             "ziniao_automation.accepted_card_runner",
             "--store-id",
             task.store_id,
@@ -830,20 +824,14 @@ class SubprocessCardExecutor:
             "--invitation-group-id",
             task.invitation_id_snapshot,
             "--confirm-send-card",
-        ]
-        environment = os.environ.copy()
-        package_src = Path(settings.PROJECT_ROOT) / "ziniao-automation" / "src"
-        prior_pythonpath = environment.get("PYTHONPATH", "")
-        environment["PYTHONPATH"] = (
-            str(package_src)
-            if not prior_pythonpath
-            else f"{package_src}{os.pathsep}{prior_pythonpath}"
+            python_executable=self.python_executable,
         )
+        environment = automation_environment()
         try:
             completed = run_task_subprocess(
                 task.pk,
                 command,
-                cwd=settings.PROJECT_ROOT,
+                cwd=runtime_cwd(),
                 env=environment,
                 timeout=self.timeout_seconds,
             )
@@ -946,9 +934,7 @@ class SubprocessCardExecutor:
                 + "。"
             )
         creators = [f"@{target.normalized_handle}" for target in targets]
-        command = [
-            self.python_executable,
-            "-m",
+        command = automation_command(
             "ziniao_automation.accepted_card_runner",
             "--store-id",
             task.store_id,
@@ -959,20 +945,14 @@ class SubprocessCardExecutor:
             "--invitation-group-id",
             task.invitation_id_snapshot,
             "--confirm-send-card",
-        ]
-        environment = os.environ.copy()
-        package_src = Path(settings.PROJECT_ROOT) / "ziniao-automation" / "src"
-        prior_pythonpath = environment.get("PYTHONPATH", "")
-        environment["PYTHONPATH"] = (
-            str(package_src)
-            if not prior_pythonpath
-            else f"{package_src}{os.pathsep}{prior_pythonpath}"
+            python_executable=self.python_executable,
         )
+        environment = automation_environment()
         try:
             completed = run_task_subprocess(
                 task.pk,
                 command,
-                cwd=settings.PROJECT_ROOT,
+                cwd=runtime_cwd(),
                 env=environment,
                 timeout=self.timeout_seconds * max(1, len(targets)),
             )
@@ -1080,9 +1060,7 @@ class SubprocessMembershipExecutor:
                 + "、".join(missing)
                 + "。"
             )
-        command = [
-            self.python_executable,
-            "-m",
+        command = automation_command(
             "ziniao_automation.accepted_card_runner",
             "--store-id",
             task.store_id,
@@ -1093,20 +1071,14 @@ class SubprocessMembershipExecutor:
             "--invitation-group-id",
             task.invitation_id_snapshot,
             "--verify-only",
-        ]
-        environment = os.environ.copy()
-        package_src = Path(settings.PROJECT_ROOT) / "ziniao-automation" / "src"
-        prior_pythonpath = environment.get("PYTHONPATH", "")
-        environment["PYTHONPATH"] = (
-            str(package_src)
-            if not prior_pythonpath
-            else f"{package_src}{os.pathsep}{prior_pythonpath}"
+            python_executable=self.python_executable,
         )
+        environment = automation_environment()
         try:
             completed = run_task_subprocess(
                 task.pk,
                 command,
-                cwd=settings.PROJECT_ROOT,
+                cwd=runtime_cwd(),
                 env=environment,
                 timeout=self.timeout_seconds,
             )
@@ -1198,9 +1170,7 @@ class SubprocessMembershipExecutor:
                 + "。"
             )
         creators = [f"@{target.normalized_handle}" for target in targets]
-        command = [
-            self.python_executable,
-            "-m",
+        command = automation_command(
             "ziniao_automation.accepted_card_runner",
             "--store-id",
             task.store_id,
@@ -1211,20 +1181,14 @@ class SubprocessMembershipExecutor:
             "--invitation-group-id",
             task.invitation_id_snapshot,
             "--verify-only",
-        ]
-        environment = os.environ.copy()
-        package_src = Path(settings.PROJECT_ROOT) / "ziniao-automation" / "src"
-        prior_pythonpath = environment.get("PYTHONPATH", "")
-        environment["PYTHONPATH"] = (
-            str(package_src)
-            if not prior_pythonpath
-            else f"{package_src}{os.pathsep}{prior_pythonpath}"
+            python_executable=self.python_executable,
         )
+        environment = automation_environment()
         try:
             completed = run_task_subprocess(
                 task.pk,
                 command,
-                cwd=settings.PROJECT_ROOT,
+                cwd=runtime_cwd(),
                 env=environment,
                 timeout=self.timeout_seconds * max(1, len(targets)),
             )

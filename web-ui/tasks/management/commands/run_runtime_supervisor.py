@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import signal
 import subprocess
-import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -20,6 +19,7 @@ from shared.processes import (
     new_process_group_kwargs,
     terminate_process_tree,
 )
+from shared.runtime_commands import django_command, runtime_cwd
 from shared.windows_job import WindowsKillOnCloseJob
 from creator_contact.services.worker_runtime import worker_endpoint_ready
 from mailing.services.worker_runtime import email_worker_endpoint_ready
@@ -37,11 +37,7 @@ class ManagedService:
     unhealthy_checks: int = 0
 
     def command(self) -> list[str]:
-        return [
-            sys.executable,
-            str(settings.BASE_DIR / "manage.py"),
-            *self.arguments,
-        ]
+        return django_command(*self.arguments)
 
 
 class Command(BaseCommand):
@@ -133,12 +129,8 @@ class Command(BaseCommand):
                     "正在预启动并验收紫鸟店铺浏览器首页。"
                 )
                 result = subprocess.run(
-                    [
-                        sys.executable,
-                        str(settings.BASE_DIR / "manage.py"),
-                        "prepare_ziniao_browser",
-                    ],
-                    cwd=settings.PROJECT_ROOT,
+                    django_command("prepare_ziniao_browser"),
+                    cwd=runtime_cwd(),
                     check=False,
                 )
                 if result.returncode != 0:
@@ -210,7 +202,7 @@ class Command(BaseCommand):
     ) -> None:
         process = subprocess.Popen(
             service.command(),
-            cwd=settings.PROJECT_ROOT,
+            cwd=runtime_cwd(),
             **new_process_group_kwargs(),
         )
         service.process = process

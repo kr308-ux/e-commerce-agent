@@ -1,0 +1,83 @@
+name: Build Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example 0.1.0"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Windows x64 one-folder
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12 x64
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.10"
+          architecture: "x64"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+
+      - name: Install locked dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-build.txt
+
+      - name: Run offline tests
+        shell: pwsh
+        env:
+          DJANGO_SECRET_KEY: ci-test-only-not-a-business-secret
+          DJANGO_DEBUG: "true"
+          DATABASE_PATH: storage/ci-test.db
+          ZINIAO_BROWSER_LOGIN_WAIT_SECONDS: "1"
+        run: |
+          python web-ui/manage.py check
+          python web-ui/manage.py test tasks creator_contact mailing --noinput
+          $env:PYTHONPATH = "ziniao-automation/src"
+          python -m unittest discover -s ziniao-automation/tests -v
+
+      - name: Build one-folder executable
+        shell: pwsh
+        run: python -m PyInstaller packaging/EcommerceAgent.spec --noconfirm --clean
+
+      - name: Run frozen offline smoke tests
+        shell: pwsh
+        run: ./packaging/windows/smoke-test.ps1
+
+      - name: Download and verify OpenCode runtime
+        shell: pwsh
+        run: ./packaging/windows/download-opencode.ps1
+
+      - name: Assemble and scan release
+        shell: pwsh
+        run: |
+          $Version = "${{ inputs.version }}".Trim()
+          if (-not $Version) {
+            $Version = "dev-$($env:GITHUB_SHA.Substring(0, 7))"
+          }
+          ./packaging/windows/assemble-release.ps1 -Version $Version
+
+      - name: Upload Windows release
+        uses: actions/upload-artifact@v7
+        with:
+          name: EcommerceAgent-Windows-x64
+          path: |
+            release/EcommerceAgent-Windows-x64-*.zip
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14

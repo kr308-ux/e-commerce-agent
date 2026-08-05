@@ -7,22 +7,41 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-PROJECT_ROOT = BASE_DIR.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-load_dotenv(PROJECT_ROOT / ".env")
+IMPORT_ROOT = Path(
+    getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2])
+).resolve()
+if str(IMPORT_ROOT) not in sys.path:
+    sys.path.insert(0, str(IMPORT_ROOT))
+
+from shared.runtime_paths import (  # noqa: E402
+    APP_HOME,
+    RESOURCE_ROOT,
+    is_frozen,
+)
+
+
+BASE_DIR = RESOURCE_ROOT / "web-ui"
+PROJECT_ROOT = APP_HOME
+load_dotenv(APP_HOME / ".env")
 from shared.exceptions import install_exception_hooks
 
-install_exception_hooks(PROJECT_ROOT)
+install_exception_hooks(APP_HOME)
 project_venv_python = (
-    PROJECT_ROOT
+    APP_HOME
     / ".venv"
     / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 )
 AUTOMATION_PYTHON_EXECUTABLE = os.getenv(
     "AUTOMATION_PYTHON_EXECUTABLE",
-    str(project_venv_python if project_venv_python.is_file() else sys.executable),
+    str(
+        sys.executable
+        if is_frozen()
+        else (
+            project_venv_python
+            if project_venv_python.is_file()
+            else sys.executable
+        )
+    ),
 )
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "development-only-change-me")
@@ -107,7 +126,16 @@ IMPORT_RULE_MODEL = os.getenv(
     "IMPORT_RULE_MODEL",
     "deepseek/deepseek-v4-flash",
 )
-OPENCODE_BINARY = os.getenv("OPENCODE_BINARY", "opencode")
+bundled_opencode = (
+    APP_HOME
+    / "runtime"
+    / "opencode"
+    / ("opencode.exe" if os.name == "nt" else "opencode")
+)
+OPENCODE_BINARY = os.getenv(
+    "OPENCODE_BINARY",
+    str(bundled_opencode if bundled_opencode.is_file() else "opencode"),
+)
 TASK_TIMEOUT_SECONDS = int(os.getenv("TASK_TIMEOUT_SECONDS", "1800"))
 IMPORT_RULE_TIMEOUT_SECONDS = int(
     os.getenv("IMPORT_RULE_TIMEOUT_SECONDS", "120")
@@ -224,7 +252,11 @@ creator_email_image_setting = Path(
     )
 )
 if not creator_email_image_setting.is_absolute():
-    creator_email_image_setting = PROJECT_ROOT / creator_email_image_setting
+    creator_email_image_setting = (
+        APP_HOME / creator_email_image_setting
+        if os.getenv("CREATOR_EMAIL_IMAGE_PATH")
+        else RESOURCE_ROOT / creator_email_image_setting
+    )
 CREATOR_EMAIL_IMAGE_PATH = creator_email_image_setting.resolve()
 SPORTS_JACKET_URL = os.getenv("SPORTS_JACKET_URL", "").strip()
 WOMENS_SHORTS_URL = os.getenv("WOMENS_SHORTS_URL", "").strip()

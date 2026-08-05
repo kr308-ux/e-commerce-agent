@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -16,6 +15,8 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from tasks.models import ImportTask
+from shared.processes import new_process_group_kwargs
+from shared.runtime_commands import django_command, runtime_cwd
 
 from .forms import CreatorContactTaskForm, GreetingTemplateForm
 from .models import (
@@ -503,19 +504,19 @@ def start_task(
     command = None
     try:
         if not worker_reused:
-            manage_py = Path(settings.BASE_DIR) / "manage.py"
-            command = [
-                settings.AUTOMATION_PYTHON_EXECUTABLE,
-                str(manage_py),
+            command = django_command(
                 "run_creator_contact_worker",
                 "--server-mode",
                 "--control-host",
                 worker_host,
                 "--control-port",
                 str(worker_port),
-            ]
+                python_executable=(
+                    settings.AUTOMATION_PYTHON_EXECUTABLE
+                ),
+            )
             popen_kwargs = {
-                "cwd": settings.PROJECT_ROOT,
+                "cwd": runtime_cwd(),
                 "close_fds": True,
                 **new_process_group_kwargs(),
             }
@@ -821,4 +822,3 @@ def sync_collaborations(request: HttpRequest) -> HttpResponse:
             status=202,
         )
     return redirect("creator_contact:dashboard")
-from shared.processes import new_process_group_kwargs

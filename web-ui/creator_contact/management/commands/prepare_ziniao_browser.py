@@ -14,9 +14,10 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         automation_src = (
-            Path(settings.PROJECT_ROOT) / "ziniao-automation" / "src"
+            Path(settings.RESOURCE_ROOT) / "ziniao-automation" / "src"
         )
-        sys.path.insert(0, str(automation_src))
+        if automation_src.is_dir():
+            sys.path.insert(0, str(automation_src))
 
         from ziniao_automation.browser_startup import (  # noqa: PLC0415
             ensure_store_browser_ready,

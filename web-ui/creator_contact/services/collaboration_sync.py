@@ -9,7 +9,6 @@ import subprocess
 import time
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from django.conf import settings
@@ -21,6 +20,11 @@ from creator_contact.models import (
     DirectedCollaborationOption,
 )
 from shared.logger import JsonlAuditLogger, project_log_root
+from shared.runtime_commands import (
+    automation_command,
+    automation_environment,
+    runtime_cwd,
+)
 
 
 class CollaborationSyncCapabilityError(RuntimeError):
@@ -93,22 +97,14 @@ class SubprocessCollaborationExecutor:
                 + "、".join(missing)
                 + "。"
             )
-        environment = os.environ.copy()
-        package_src = Path(settings.PROJECT_ROOT) / "ziniao-automation" / "src"
-        prior_pythonpath = environment.get("PYTHONPATH", "")
-        environment["PYTHONPATH"] = (
-            str(package_src)
-            if not prior_pythonpath
-            else f"{package_src}{os.pathsep}{prior_pythonpath}"
-        )
-        command = [
-            self.python_executable,
-            "-m",
+        environment = automation_environment()
+        command = automation_command(
             "ziniao_automation.collaboration_sync_runner",
             "--store-id",
             str(store_id),
             "--json",
-        ]
+            python_executable=self.python_executable,
+        )
         audit_logger = JsonlAuditLogger(
             root=project_log_root(settings.PROJECT_ROOT),
             category="regular",
@@ -129,7 +125,7 @@ class SubprocessCollaborationExecutor:
         try:
             completed = subprocess.run(
                 command,
-                cwd=settings.PROJECT_ROOT,
+                cwd=runtime_cwd(),
                 env=environment,
                 capture_output=True,
                 text=True,

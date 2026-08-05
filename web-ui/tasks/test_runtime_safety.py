@@ -22,6 +22,7 @@ from shared.file_lock import SingleInstanceLock
 from shared.db import retry_locked_database_operation
 from shared.logger import cleanup_old_logs
 from shared.processes import new_process_group_kwargs
+from shared import runtime_commands, runtime_paths
 from tasks.models import ImportTask
 
 
@@ -81,6 +82,66 @@ class LogCleanupTests(SimpleTestCase):
 
 
 class RuntimePrimitiveTests(SimpleTestCase):
+    def test_frozen_paths_split_writable_home_and_resources(self) -> None:
+        with patch.object(
+            runtime_paths.sys,
+            "frozen",
+            True,
+            create=True,
+        ), patch.object(
+            runtime_paths.sys,
+            "executable",
+            "/release/EcommerceAgent/EcommerceAgent.exe",
+        ), patch.object(
+            runtime_paths.sys,
+            "_MEIPASS",
+            "/release/EcommerceAgent/_internal",
+            create=True,
+        ):
+            self.assertEqual(
+                runtime_paths.app_home(),
+                Path("/release/EcommerceAgent"),
+            )
+            self.assertEqual(
+                runtime_paths.resource_root(),
+                Path("/release/EcommerceAgent/_internal"),
+            )
+
+    def test_frozen_commands_dispatch_through_allowlisted_flags(self) -> None:
+        with patch(
+            "shared.runtime_commands.is_frozen",
+            return_value=True,
+        ), patch.object(
+            runtime_commands.sys,
+            "executable",
+            r"C:\EcommerceAgent\EcommerceAgent.exe",
+        ):
+            self.assertEqual(
+                runtime_commands.django_command("check"),
+                [
+                    r"C:\EcommerceAgent\EcommerceAgent.exe",
+                    "--internal-manage",
+                    "check",
+                ],
+            )
+            self.assertEqual(
+                runtime_commands.automation_command(
+                    "ziniao_automation.contact_task_runner",
+                    "--task-id",
+                    "safe-id",
+                ),
+                [
+                    r"C:\EcommerceAgent\EcommerceAgent.exe",
+                    "--internal-contact-task",
+                    "--task-id",
+                    "safe-id",
+                ],
+            )
+            with self.assertRaisesRegex(ValueError, "不支持"):
+                runtime_commands.automation_command(
+                    "ziniao_automation.not_allowlisted"
+                )
+
     def test_single_instance_lock_rejects_second_owner(self) -> None:
         with TemporaryDirectory() as directory:
             path = Path(directory) / "runtime.lock"

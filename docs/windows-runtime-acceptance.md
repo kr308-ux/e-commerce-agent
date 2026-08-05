@@ -3,16 +3,27 @@
 本文只用于 Windows 10/11 客户机人工验收。开发机上的自动化测试不会启动紫鸟、不会
 联系真实达人，也不会发送真实邮件。
 
-## 一、首次准备
+## 一、取得并核验绿色发布包
 
-1. 备份 `storage\agent.db`；如果文件不存在可跳过。
-2. 在项目目录打开 PowerShell，运行：
+1. 在 GitHub 仓库打开 **Actions → Build Windows release**，选择一次成功运行。
+2. 下载 `EcommerceAgent-Windows-x64` artifact 并解压一次，得到发布 ZIP 和
+   `SHA256SUMS.txt`。
+3. 在 PowerShell 中核验发布 ZIP：
 
    ```powershell
-   powershell -ExecutionPolicy Bypass -File .\scripts\setup-windows.ps1
+   Get-FileHash .\EcommerceAgent-Windows-x64-*.zip -Algorithm SHA256
    ```
 
-3. 编辑 `.env`，至少核对：
+   结果必须与 `SHA256SUMS.txt` 完全相同。
+4. 把发布 ZIP 解压到可写、路径可包含空格和中文的目录。客户机不得安装或依赖 Python、
+   Node.js、Git 和项目源码。
+
+## 二、首次配置
+
+1. 安装紫鸟客户端，但不要复制开发机的 `.env`、数据库、日志或浏览器会话。
+2. 双击发布目录中的 `首次配置.cmd`。脚本应创建空数据目录、本机 `.env` 和随机
+   `DJANGO_SECRET_KEY`，但第二次运行不得覆盖已有 `.env`。
+3. 在自动打开的记事本中至少核对：
 
    - `ZINIAO_CLIENT_PATH`：留空使用默认路径，或填写实际 `ziniao.exe` 完整路径；
    - 紫鸟公司、用户名、密码和店铺 ID；
@@ -20,16 +31,18 @@
    - `LOG_RETENTION_DAYS=14`；
    - `SQLITE_ENABLE_WAL=true`。
 
-4. 运行迁移和配置检查：
+4. 保存并关闭记事本。脚本应自动执行迁移和 Django 检查，最后显示“首次配置完成”。
+5. 确认以下内容全部位于解压目录，而不是 `_internal`：
 
-   ```powershell
-   .\.venv\Scripts\python.exe web-ui\manage.py migrate
-   .\.venv\Scripts\python.exe web-ui\manage.py check
-   ```
+   - `.env`；
+   - `storage\agent.db`；
+   - `logs\`；
+   - `temporary\`；
+   - 浏览器驱动、会话状态和自适应定位器数据库。
 
-## 二、启动与进程守护
+## 三、启动与进程守护
 
-双击 `scripts\start-windows.cmd`。预期窗口依次显示：
+双击发布目录中的 `启动系统.cmd`。预期窗口依次显示：
 
 1. Django 已启动；
 2. 紫鸟以 `--run_type=web_driver --ipc_type=http --port=16851` 模式通过验收；
@@ -43,19 +56,26 @@
 如果紫鸟已经以普通工作台模式运行，系统必须拒绝继续自动化，不能默默复用或按进程名
 结束其他紫鸟进程。
 
-## 三、无真实外部写入的检查
+运行 `系统检查.cmd` 应显示 Django 系统检查通过。运行 `停止系统.cmd` 或在启动窗口按
+Ctrl+C 后，五个受管服务应全部退出。
+
+## 四、无真实外部写入的检查
 
 1. 打开 Django 页面，确认导入、联系、邮件页面可访问。
-2. 执行日志清理预览：
+2. 在发布目录打开 PowerShell，执行日志清理预览：
 
    ```powershell
-   .\.venv\Scripts\python.exe web-ui\manage.py cleanup_runtime_logs --dry-run
+   .\EcommerceAgent.exe --internal-manage cleanup_runtime_logs --dry-run
    ```
 
 3. 检查 `logs\YYYY-MM-DD\` 下存在运行日志，且异常日志不包含密码、Cookie 或 API Key。
 4. 按 Ctrl+C。预期所有受管服务依次停止，不留下额外 Django/Worker Python 进程。
 
-## 四、排队与并发业务验收
+5. 查看发布目录，确认不存在项目 `.py`、`.git`、测试、真实 `.env` 模板值、历史数据库、
+   历史日志、截图、Cookie 或开发机绝对路径。
+6. 验证 `.xlsx`、`.xls`、`.csv` 导入，并使用测试提示验证 OpenCode 规则修正功能。
+
+## 五、排队与并发业务验收
 
 仅使用你明确授权的测试店铺、测试达人和测试邮箱。
 
@@ -71,7 +91,7 @@
 4. B、C 完成后，邮件应追加到同一队列；同一达人不得产生重复投递。
 5. 达到每日上限后，邮件保留在队列，不应每隔几秒重复尝试。
 
-## 五、异常恢复验收
+## 六、异常恢复验收
 
 以下测试不要对真实客户邮箱或未授权达人执行。
 
@@ -98,7 +118,14 @@
    - 常驻 Worker 不得立刻重新开始；
    - 新建队列或人工重试会显式恢复发送。
 
-## 六、验收记录
+## 七、路径和关机专项验收
+
+1. 分别在含空格和中文的解压路径运行首次配置、检查、启动和停止脚本。
+2. 直接关闭启动窗口后，确认没有残留 `EcommerceAgent.exe` 子进程。
+3. 再次启动后确认 SQLite WAL 正常恢复，未出现第二套 Worker。
+4. 在未安装 Python、Node.js 和 Git 的干净 Windows 10/11 x64 测试机重复上述检查。
+
+## 八、验收记录
 
 请记录以下信息并反馈：
 
@@ -108,4 +135,7 @@
 - A/B/C 三个任务的执行顺序；
 - 联系与邮件并发时是否出现 `database is locked`；
 - Ctrl+C 后是否存在残留进程；
+- 直接关闭窗口后是否存在残留进程；
+- 绿色包解压路径是否包含空格或中文；
+- ZIP SHA-256 与 `SHA256SUMS.txt` 是否一致；
 - 任何“需人工复核”或“送达状态待确认”记录的截图。

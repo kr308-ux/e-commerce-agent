@@ -64,7 +64,7 @@ macOS：
 ./scripts/setup-macos.sh
 ```
 
-Windows 10+：
+Windows 10+ 源码开发环境：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup-windows.ps1
@@ -101,6 +101,24 @@ GMAIL_APP_PASSWORD=
 第 8 步已打开定向合作但缺少“发送其他邀请开展合作”时固定等待 3 秒且只刷新一次。
 表格预览修正规则从 `IMPORT_RULE_MODEL` 读取。
 
+## Windows 无源码发布包
+
+GitHub Actions 的 `Build Windows release` 工作流会在官方 Windows x64 Runner 上：
+
+1. 运行全部离线测试；
+2. 使用 PyInstaller one-folder 构建 `EcommerceAgent.exe`；
+3. 对冻结程序执行迁移、Django 检查和五服务 Supervisor smoke test；
+4. 从 OpenCode 官方 Release 下载固定的 Windows x64 CLI 并校验 SHA-256；
+5. 扫描并拒绝项目 `.py`、`.env`、数据库、日志、测试和开发机路径；
+6. 上传 `EcommerceAgent-Windows-x64-<version>.zip` 与 `SHA256SUMS.txt`。
+
+在 GitHub 仓库的 **Actions → Build Windows release → Run workflow** 中选择 `dev`
+分支并填写版本号即可手动构建。客户机无需安装 Python、Node.js、Git 或编译工具；下载后
+只需解压、安装紫鸟、双击 `首次配置.cmd`，再双击 `启动系统.cmd`。
+
+发布包内捆绑 OpenCode CLI 1.18.10，来源为官方 Release，构建时核验固定 SHA-256，
+并附带 MIT License。业务密钥不会进入 Actions 或发布包，只写入客户机本地 `.env`。
+
 ## 启动
 
 macOS：
@@ -109,13 +127,16 @@ macOS：
 ./scripts/start-macos.sh
 ```
 
-Windows：
+Windows 源码开发环境：
 
 ```powershell
 .\scripts\start-windows.ps1
 ```
 
 非技术用户也可以直接双击 `scripts\start-windows.cmd`。
+
+Windows 绿色发布包用户应双击发布目录中的 `启动系统.cmd`，不要运行 `scripts` 下的
+源码部署脚本。
 
 启动脚本先启动一个单实例 Supervisor，由它守护 Django、达人导入 Worker、达人联系
 Worker、定向合作同步 Worker 和邮件 Worker。任一子进程异常退出会按退避策略重启；

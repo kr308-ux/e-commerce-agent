@@ -8,10 +8,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from shared.runtime_paths import APP_HOME
+
 from .errors import ZiniaoConfigurationError
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = APP_HOME
 load_dotenv(PROJECT_ROOT / ".env")
 
 

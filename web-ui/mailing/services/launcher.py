@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
 
 from django.conf import settings
@@ -12,6 +11,7 @@ from django.utils import timezone
 
 from shared.logger import project_log_root
 from shared.processes import new_process_group_kwargs
+from shared.runtime_commands import django_command, runtime_cwd
 
 from mailing.models import EmailDelivery, EmailSendingService
 from mailing.services.retry import retry_available_queryset
@@ -59,13 +59,9 @@ def launch_email_sender(*, resume_paused: bool = True) -> bool:
 
     log_path = email_sender_log_path()
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    command = [
-        sys.executable,
-        str(settings.BASE_DIR / "manage.py"),
-        "send_creator_emails",
-    ]
+    command = django_command("send_creator_emails")
     popen_kwargs: dict[str, object] = {
-        "cwd": str(settings.BASE_DIR),
+        "cwd": str(runtime_cwd()),
         "stdin": subprocess.DEVNULL,
     }
     popen_kwargs.update(new_process_group_kwargs())

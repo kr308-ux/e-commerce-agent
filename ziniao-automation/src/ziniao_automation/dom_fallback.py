@@ -14,6 +14,7 @@ from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
 
 from shared.logger import JsonlAuditLogger, project_log_root
+from shared.runtime_paths import APP_HOME
 
 from .adaptive_locator import (
     AdaptiveLocatorEngine,
@@ -81,7 +82,7 @@ class DeepSeekDomFallback:
         self.max_elements = max_elements
         self._calls: dict[str, int] = {}
         self._events: list[dict[str, Any]] = []
-        project_root = Path(__file__).resolve().parents[3]
+        project_root = APP_HOME
         cache_path = (
             Path(locator_cache_path)
             if locator_cache_path is not None

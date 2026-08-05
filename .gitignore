@@ -28,6 +28,8 @@ staticfiles/
 # Node / TypeScript
 node_modules/
 dist/
+build/
+release/
 *.tsbuildinfo
 
 # Editors and operating systems
