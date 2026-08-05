@@ -13,6 +13,8 @@ htmlcov/
 
 # Django / project runtime
 storage/agent.db
+storage/agent.db-shm
+storage/agent.db-wal
 storage/backups/
 storage/exports/
 logs/

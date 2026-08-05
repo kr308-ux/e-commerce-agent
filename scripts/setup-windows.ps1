@@ -11,7 +11,11 @@ if (-not (Test-Path ".env")) {
     Copy-Item ".env.example" ".env"
 }
 
+if (Select-String -Path ".env" -Pattern "ZINIAO_CLIENT_PATH=/Applications/ziniao.app" -Quiet) {
+    Write-Warning ".env 仍包含 macOS 紫鸟路径，请手动清空 ZINIAO_CLIENT_PATH 或填写实际 ziniao.exe 路径。"
+}
+
 & ".\.venv\Scripts\python.exe" "web-ui\manage.py" check
 & ".\.venv\Scripts\python.exe" "web-ui\manage.py" migrate
 
-Write-Host "环境准备完成。运行 .\scripts\start-windows.ps1 可同时启动 Django、导入 Worker 和两个联系模块 Worker。"
+Write-Host "环境准备完成。可双击 scripts\start-windows.cmd 启动全部服务。"

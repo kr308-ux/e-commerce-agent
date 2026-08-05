@@ -1,0 +1,735 @@
+{
+  "meta": {
+    "timestamp": "2026-07-30T16:49:30.922236+08:00",
+    "store_id": "27850427216664",
+    "creator": "@simplykieshhh",
+    "pages_requested": 5,
+    "pages_tested": 5,
+    "connection_mode": "reused",
+    "skip_navigation": false,
+    "cdp_marking": {
+      "attempted": 5705,
+      "total_marked": 5705,
+      "failed": 0,
+      "success_rate": 1.0
+    }
+  },
+  "per_page": [
+    {
+      "page_id": "store_home",
+      "description": "店铺首页",
+      "status": "tested",
+      "url": "https://seller.us.tiktokshopglobalselling.com/homepage?shop_region=US",
+      "navigation": {
+        "skipped": false,
+        "action": null,
+        "url_after": "https://seller.us.tiktokshopglobalselling.com/homepage?shop_region=US"
+      },
+      "ax_nodes": 591,
+      "dom_visible": 23,
+      "covered": 23,
+      "coverage_rate": 1.0,
+      "frame_count": 3,
+      "targets": {
+        "T-01": {
+          "description": "联盟入口",
+          "dynamic": false,
+          "status": "hit",
+          "in_ax": true,
+          "ax_role": "link",
+          "ax_name": "联盟",
+          "ax_state": {
+            "focusable": true,
+            "url": "https://seller.us.tiktokshopglobalselling.com/affiliate/landing"
+          },
+          "ax_phase": "initial",
+          "in_dom": true,
+          "dom_tag": "a",
+          "dom_role": "",
+          "dom_phase": "initial"
+        },
+        "T-02": {
+          "description": "查找达人入口",
+          "dynamic": false,
+          "status": "hit",
+          "in_ax": true,
+          "ax_role": "menuitem",
+          "ax_name": "查找达人",
+          "ax_state": {
+            "focusable": true
+          },
+          "ax_phase": "affiliate_navigation",
+          "in_dom": true,
+          "dom_tag": "div",
+          "dom_role": "menuitem",
+          "dom_phase": "affiliate_navigation"
+        }
+      },
+      "missed_examples": [],
+      "phases": [
+        {
+          "phase": "initial",
+          "url": "https://seller.us.tiktokshopglobalselling.com/homepage?shop_region=US",
+          "frame_count": 3,
+          "frame_errors": [],
+          "ax_nodes": 591,
+          "ax_nodes_non_ignored": 400,
+          "dom_visible": 23,
+          "covered": 23,
+          "coverage_rate": 1.0,
+          "marking": {
+            "backend_nodes_considered": 301,
+            "attempted": 209,
+            "marked": 209,
+            "failed": 0,
+            "skipped_non_element": 92,
+            "success_rate": 1.0,
+            "failure_examples": []
+          }
+        },
+        {
+          "phase": "affiliate_navigation",
+          "url": "https://affiliate.tiktokshopglobalselling.com/platform/homepage?source_from=seller_affiliate_landing&shop_region=US&shop_id=7494457046637512384",
+          "frame_count": 1,
+          "frame_errors": [],
+          "ax_nodes": 961,
+          "ax_nodes_non_ignored": 627,
+          "dom_visible": 41,
+          "covered": 40,
+          "coverage_rate": 0.9756,
+          "marking": {
+            "backend_nodes_considered": 447,
+            "attempted": 266,
+            "marked": 266,
+            "failed": 0,
+            "skipped_non_element": 181,
+            "success_rate": 1.0,
+            "failure_examples": []
+          }
+        }
+      ],
+      "phase_error": null,
+      "dynamic_error": null,
+      "verdict": "pass"
+    },
+    {
+      "page_id": "find_creators",
+      "description": "查找达人页",
+      "status": "tested",
+      "url": "https://affiliate.tiktokshopglobalselling.com/connection/creator?shop_region=US&shop_id=7494457046637512384",
+      "navigation": {
+        "skipped": false,
+        "action": "activate_existing",
+        "url_after": "https://affiliate.tiktokshopglobalselling.com/connection/creator?shop_region=US&shop_id=7494457046637512384"
+      },
+      "ax_nodes": 2275,
+      "dom_visible": 61,
+      "covered": 61,
+      "coverage_rate": 1.0,
+      "frame_count": 1,
+      "targets": {
+        "T-03": {
+          "description": "AI 搜索开关",
+          "dynamic": false,
+          "status": "miss",
+          "in_ax": false,
+          "ax_role": null,
+          "ax_name": null,
+          "ax_state": null,
+          "ax_phase": null,
+          "in_dom": true,
+          "dom_tag": "button",
+          "dom_role": "switch",
+          "dom_phase": "initial",
+          "expected_state": {
+            "checked": true
+          },
+          "note": "DOM 可见但未在 AXTree 中命中"
+        },
+        "T-04": {
+          "description": "搜索输入框",
+          "dynamic": false,
+          "status": "hit",
+          "in_ax": true,
+          "ax_role": "textbox",
+          "ax_name": "搜索姓名、商品、话题标签或关键词",
+          "ax_state": {
+            "invalid": "false",
+            "focusable": true,
+            "editable": "plaintext",
+            "settable": true,
+            "multiline": false,
+            "readonly": false,
+            "required": false
+          },
+          "ax_phase": "initial",
+          "in_dom": true,
+          "dom_tag": "input",
+          "dom_role": "",
+          "dom_phase": "initial"
+        },
+        "T-05": {
+          "description": "精确候选项",
+          "dynamic": true,
+          "status": "hit",
+          "in_ax": true,
+          "ax_role": "menuitem",
+          "ax_name": "simplykieshhh Simply_Kiesh",
+          "ax_state": {
+            "focusable": true
+          },
+          "ax_phase": "dynamic_candidate",
+          "in_dom": true,
+          "dom_tag": "div",
+          "dom_role": "menuitem",
+          "dom_phase": "dynamic_candidate"
+        },
+        "T-06": {
+          "description": "达人搜索结果卡片",
+          "dynamic": true,
+          "status": "miss",
+          "in_ax": false,
+          "ax_role": null,
+          "ax_name": null,
+          "ax_state": null,
+          "ax_phase": null,
+          "in_dom": true,
+          "dom_tag": "tr",
+          "dom_role": "",
+          "dom_phase": "dynamic_candidate",
+          "note": "DOM 可见但未在 AXTree 中命中"
+        },
+        "T-07": {
+          "description": "页面标题",
+          "dynamic": false,
+          "status": "miss",
+          "in_ax": false,
+          "ax_role": null,
+          "ax_name": null,
+          "ax_state": null,
+          "ax_phase": null,
+          "in_dom": false,
+          "dom_tag": null,
+          "dom_role": null,
+          "dom_phase": null
+        }
+      },
+      "missed_examples": [],
+      "phases": [
+        {
+          "phase": "initial",
+          "url": "https://affiliate.tiktokshopglobalselling.com/connection/creator?shop_region=US&shop_id=7494457046637512384",
+          "frame_count": 1,
+          "frame_errors": [],
+          "ax_nodes": 2275,
+          "ax_nodes_non_ignored": 1623,
+          "dom_visible": 61,
+          "covered": 61,
+          "coverage_rate": 1.0,
+          "marking": {
+            "backend_nodes_considered": 1233,
+            "attempted": 909,
+            "marked": 909,
+            "failed": 0,
+            "skipped_non_element": 324,
+            "success_rate": 1.0,
+            "failure_examples": []
+          }
+        },
+        {
+          "phase": "dynamic_candidate",
+          "url": "https://affiliate.tiktokshopglobalselling.com/connection/creator?shop_region=US&shop_id=7494457046637512384",
+          "frame_count": 1,
+          "frame_errors": [],
+          "ax_nodes": 2297,
+          "ax_nodes_non_ignored": 1637,
+          "dom_visible": 63,
+          "covered": 63,
+          "coverage_rate": 1.0,
+          "marking": {
+            "backend_nodes_considered": 1244,
+            "attempted": 917,
+            "marked": 917,
+            "failed": 0,
+            "skipped_non_element": 327,
+            "success_rate": 1.0,
+            "failure_examples": []
+          }
+        },
+        {
+          "phase": "dynamic_result",
+          "url": "https://affiliate.tiktokshopglobalselling.com/connection/creator?shop_region=US&shop_id=7494457046637512384",
+          "frame_count": 1,
+          "frame_errors": [],
+          "ax_nodes": 2275,
+          "ax_nodes_non_ignored": 1623,
+          "dom_visible": 61,
+          "covered": 61,
+          "coverage_rate": 1.0,
+          "marking": {
+            "backend_nodes_considered": 1233,
+            "attempted": 909,
+            "marked": 909,
+            "failed": 0,
+            "skipped_non_element": 324,
+            "success_rate": 1.0,
+            "failure_examples": []
+          }
+        }
+      ],
+      "phase_error": null,
+      "dynamic_error": null,
+      "verdict": "warn"
+    },
+    {
+      "page_id": "creator_detail",
+      "description": "达人详情页",
+      "status": "tested",
+      "url": "https://affiliate.tiktokshopglobalselling.com/connection/creator/detail?cid=7493997587898337705&pair_source=author_search&enter_from=affiliate_find_creators&search_key=7wDxqEJdUpcihLlQpRq8jDonHEncqLz09Y+LyGFfurY=&req_id=&query=simplykieshhh&shop_region=US&shop_id=7494457046637512384",
+      "navigation": {
+        "skipped": false,
+        "action": "navigate_via_link",
+        "url_after": "https://affiliate.tiktokshopglobalselling.com/connection/creator/detail?cid=7493997587898337705&pair_source=author_search&enter_from=affiliate_find_creators&search_key=7wDxqEJdUpcihLlQpRq8jDonHEncqLz09Y+LyGFfurY=&req_id=&query=simplykieshhh&shop_region=US&shop_id=7494457046637512384"
+      },
+      "ax_nodes": 2834,
+      "dom_visible": 108,
+      "covered": 108,
+      "coverage_rate": 1.0,
+      "frame_count": 1,
+      "targets": {
+        "T-08": {
+          "description": "私信按钮",
+          "dynamic": false,
+          "status": "miss",
+          "in_ax": false,
+          "ax_role": null,
+          "ax_name": null,
+          "ax_state": null,
+          "ax_phase": null,
+          "in_dom": true,
+          "dom_tag": "button",
+          "dom_role": "",
+          "dom_phase": "initial",
+          "note": "DOM 可见但未在 AXTree 中命中"
+        },
+        "T-09": {
+          "description": "外部打开聊天",
+          "dynamic": false,
+          "status": "miss",
+          "in_ax": false,
+          "ax_role": null,
+          "ax_name": null,
+          "ax_state": null,
+          "ax_phase": null,
+          "in_dom": true,
+          "dom_tag": "button",
+          "dom_role": "",
+          "dom_phase": "initial",
+          "note": "DOM 可见但未在 AXTree 中命中"
+        },
+        "T-10": {
+          "description": "达人名称",
+          "dynamic": false,
+          "status": "hit",
+          "in_ax": true,
+          "ax_role": "StaticText",
+          "ax_name": "simplykieshhh",
+          "ax_state": {},
+          "ax_phase": "initial",
+          "in_dom": true,
+          "dom_tag": "span",
+          "dom_role": "",
+          "dom_phase": "initial"
+        }
+      },
+      "missed_examples": [],
+      "phases": [
+        {
+          "phase": "initial",
+          "url": "https://affiliate.tiktokshopglobalselling.com/connection/creator/detail?cid=7493997587898337705&pair_source=author_search&enter_from=affiliate_find_creators&search_key=7wDxqEJdUpcihLlQpRq8jDonHEncqLz09Y+LyGFfurY=&req_id=&query=simplykieshhh&shop_region=US&shop_id=7494457046637512384",
+          "frame_count": 1,
+          "frame_errors": [],
+          "ax_nodes": 2834,
+          "ax_nodes_non_ignored": 1827,
+          "dom_visible": 108,
+          "covered": 108,
+          "coverage_rate": 1.0,
+          "marking": {
+            "backend_nodes_considered": 1317,
+            "attempted": 870,
+            "marked": 870,
+            "failed": 0,
+            "skipped_non_element": 447,
+            "success_rate": 1.0,
+            "failure_examples": []
+          }
+        },
+        {
+          "phase": "message_drawer",
+          "url": "https://affiliate.tiktokshopglobalselling.com/connection/creator/detail?cid=7493997587898337705&pair_source=author_search&enter_from=affiliate_find_creators&search_key=7wDxqEJdUpcihLlQpRq8jDonHEncqLz09Y+LyGFfurY=&req_id=&query=simplykieshhh&shop_region=US&shop_id=7494457046637512384",
+          "frame_count": 1,
+          "frame_errors": [],
+          "ax_nodes": 2834,
+          "ax_nodes_non_ignored": 1827,
+          "dom_visible": 108,
+          "covered": 108,
+          "coverage_rate": 1.0,
+          "marking": {
+            "backend_nodes_considered": 1317,
+            "attempted": 870,
+            "marked": 870,
+            "failed": 0,
+            "skipped_non_element": 447,
+            "success_rate": 1.0,
+            "failure_examples": []
+          }
+        }
+      ],
+      "phase_error": null,
+      "dynamic_error": null,
+      "verdict": "warn"
+    },
+    {
+      "page_id": "chat_tab",
+      "description": "聊天标签页 (Cooperation Chat)",
+      "status": "tested",
+      "url": "https://affiliate.tiktokshopglobalselling.com/seller/im?creator_id=7493997587898337705&shop_region=US&shop_id=7494457046637512384",
+      "navigation": {
+        "skipped": false,
+        "action": "activate_existing",
+        "url_after": "https://affiliate.tiktokshopglobalselling.com/seller/im?creator_id=7493997587898337705&shop_region=US&shop_id=7494457046637512384"
+      },
+      "ax_nodes": 850,
+      "dom_visible": 46,
+      "covered": 44,
+      "coverage_rate": 0.9565,
+      "frame_count": 1,
+      "targets": {
+        "T-11": {
+          "description": "聊天输入区",
+          "dynamic": false,
+          "status": "hit",
+          "in_ax": true,
+          "ax_role": "textbox",
+          "ax_name": "发送消息",
+          "ax_state": {
+            "invalid": "false",
+            "focusable": true,
+            "editable": "plaintext",
+            "settable": true,
+            "multiline": true,
+            "readonly": false,
+            "required": false
+          },
+          "ax_phase": "initial",
+          "in_dom": true,
+          "dom_tag": "textarea",
+          "dom_role": "",
+          "dom_phase": "initial"
+        },
+        "T-12": {
+          "description": "发送按钮",
+          "dynamic": false,
+          "status": "hit",
+          "in_ax": true,
+          "ax_role": "button",
+          "ax_name": "发送",
+          "ax_state": {
+            "invalid": "false",
+            "focusable": true
+          },
+          "ax_phase": "initial",
+          "in_dom": true,
+          "dom_tag": "button",
+          "dom_role": "",
+          "dom_phase": "initial"
+        },
+        "T-13": {
+          "description": "定向合作页签",
+          "dynamic": false,
+          "status": "hit",
+          "in_ax": true,
+          "ax_role": "tab",
+          "ax_name": "定向合作 0",
+          "ax_state": {
+            "focusable": true,
+            "selected": true,
+            "controls": "core-tabs-0-panel-2"
+          },
+          "ax_phase": "initial",
+          "in_dom": true,
+          "dom_tag": "div",
+          "dom_role": "tab",
+          "dom_phase": "initial"
+        },
+        "T-14": {
+          "description": "发送其他邀请",
+          "dynamic": false,
+          "status": "hit",
+          "in_ax": true,
+          "ax_role": "button",
+          "ax_name": "+ 发送其他邀请开展合作",
+          "ax_state": {
+            "invalid": "false",
+            "focusable": true
+          },
+          "ax_phase": "initial",
+          "in_dom": true,
+          "dom_tag": "button",
+          "dom_role": "",
+          "dom_phase": "initial"
+        },
+        "T-15": {
+          "description": "已发送消息气泡",
+          "dynamic": false,
+          "status": "not_testable",
+          "in_ax": false,
+          "in_dom": false,
+          "note": "需要 --message 才能精确匹配已发送消息气泡"
+        },
+        "T-16": {
+          "description": "聊天顶部用户名",
+          "dynamic": false,
+          "status": "hit",
+          "in_ax": true,
+          "ax_role": "StaticText",
+          "ax_name": "simplykieshhh",
+          "ax_state": {},
+          "ax_phase": "initial",
+          "in_dom": true,
+          "dom_tag": "div",
+          "dom_role": "",
+          "dom_phase": "initial"
+        }
+      },
+      "missed_examples": [
+        {
+          "tag": "div",
+          "role": "separator",
+          "text": "",
+          "css_path": "#core-tabs-0-panel-0 > div > div > div:nth-of-type(2)",
+          "frame_path": [],
+          "reason": "可见交互 DOM 节点未映射到同一非 ignored AX 节点"
+        },
+        {
+          "tag": "span",
+          "role": "",
+          "text": "更多信息",
+          "css_path": "#core-tabs-0-panel-0 > div > div > div:nth-of-type(4) > span",
+          "frame_path": [],
+          "reason": "可见交互 DOM 节点未映射到同一非 ignored AX 节点"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "initial",
+          "url": "https://affiliate.tiktokshopglobalselling.com/seller/im?creator_id=7493997587898337705&shop_region=US&shop_id=7494457046637512384",
+          "frame_count": 1,
+          "frame_errors": [],
+          "ax_nodes": 913,
+          "ax_nodes_non_ignored": 592,
+          "dom_visible": 46,
+          "covered": 44,
+          "coverage_rate": 0.9565,
+          "marking": {
+            "backend_nodes_considered": 440,
+            "attempted": 331,
+            "marked": 331,
+            "failed": 0,
+            "skipped_non_element": 109,
+            "success_rate": 1.0,
+            "failure_examples": []
+          }
+        },
+        {
+          "phase": "target_collaboration",
+          "url": "https://affiliate.tiktokshopglobalselling.com/seller/im?creator_id=7493997587898337705&shop_region=US&shop_id=7494457046637512384",
+          "frame_count": 1,
+          "frame_errors": [],
+          "ax_nodes": 850,
+          "ax_nodes_non_ignored": 540,
+          "dom_visible": 46,
+          "covered": 44,
+          "coverage_rate": 0.9565,
+          "marking": {
+            "backend_nodes_considered": 397,
+            "attempted": 297,
+            "marked": 297,
+            "failed": 0,
+            "skipped_non_element": 100,
+            "success_rate": 1.0,
+            "failure_examples": []
+          }
+        }
+      ],
+      "phase_error": null,
+      "dynamic_error": null,
+      "verdict": "pass"
+    },
+    {
+      "page_id": "invitation_modal",
+      "description": "邀请弹窗",
+      "status": "tested",
+      "url": "https://affiliate.tiktokshopglobalselling.com/seller/im?creator_id=7493997587898337705&shop_region=US&shop_id=7494457046637512384",
+      "navigation": {
+        "skipped": false,
+        "action": "open_modal",
+        "url_after": "https://affiliate.tiktokshopglobalselling.com/seller/im?creator_id=7493997587898337705&shop_region=US&shop_id=7494457046637512384"
+      },
+      "ax_nodes": 1382,
+      "dom_visible": 66,
+      "covered": 66,
+      "coverage_rate": 1.0,
+      "frame_count": 1,
+      "targets": {
+        "T-17": {
+          "description": "弹窗标题",
+          "dynamic": false,
+          "status": "hit",
+          "in_ax": true,
+          "ax_role": "dialog",
+          "ax_name": "邀请 @simplykieshhh 合作",
+          "ax_state": {
+            "modal": true,
+            "labelledby": {
+              "relatedNodes": [
+                {
+                  "backendDOMNodeId": 26251,
+                  "idref": "arco-dialog-2",
+                  "text": "邀请 @simplykieshhh 合作"
+                }
+              ],
+              "type": "nodeList"
+            }
+          },
+          "ax_phase": "initial",
+          "in_dom": true,
+          "dom_tag": "html",
+          "dom_role": "",
+          "dom_phase": "initial"
+        },
+        "T-18": {
+          "description": "进行中页签",
+          "dynamic": false,
+          "status": "hit",
+          "in_ax": true,
+          "ax_role": "tab",
+          "ax_name": "进行中",
+          "ax_state": {
+            "focusable": true,
+            "selected": true
+          },
+          "ax_phase": "initial",
+          "in_dom": true,
+          "dom_tag": "div",
+          "dom_role": "tab",
+          "dom_phase": "initial"
+        },
+        "T-19": {
+          "description": "创建新邀请页签",
+          "dynamic": false,
+          "status": "hit",
+          "in_ax": true,
+          "ax_role": "tab",
+          "ax_name": "创建新邀请",
+          "ax_state": {
+            "focusable": true,
+            "selected": false
+          },
+          "ax_phase": "initial",
+          "in_dom": true,
+          "dom_tag": "div",
+          "dom_role": "tab",
+          "dom_phase": "initial"
+        },
+        "T-20": {
+          "description": "邀请单选框",
+          "dynamic": false,
+          "status": "hit",
+          "in_ax": true,
+          "ax_role": "radio",
+          "ax_name": "",
+          "ax_state": {
+            "invalid": "false",
+            "focusable": true,
+            "checked": "false",
+            "labelledby": {
+              "relatedNodes": [
+                {
+                  "backendDOMNodeId": 55625,
+                  "text": ""
+                }
+              ],
+              "type": "nodeList"
+            }
+          },
+          "ax_phase": "initial",
+          "in_dom": true,
+          "dom_tag": "input",
+          "dom_role": "",
+          "dom_phase": "initial"
+        },
+        "T-21": {
+          "description": "最终邀请按钮",
+          "dynamic": false,
+          "status": "hit",
+          "in_ax": true,
+          "ax_role": "button",
+          "ax_name": "邀请",
+          "ax_state": {
+            "disabled": true,
+            "invalid": "false"
+          },
+          "ax_phase": "initial",
+          "in_dom": true,
+          "dom_tag": "button",
+          "dom_role": "",
+          "dom_phase": "initial"
+        }
+      },
+      "missed_examples": [],
+      "phases": [
+        {
+          "phase": "initial",
+          "url": "https://affiliate.tiktokshopglobalselling.com/seller/im?creator_id=7493997587898337705&shop_region=US&shop_id=7494457046637512384",
+          "frame_count": 1,
+          "frame_errors": [],
+          "ax_nodes": 1382,
+          "ax_nodes_non_ignored": 880,
+          "dom_visible": 66,
+          "covered": 66,
+          "coverage_rate": 1.0,
+          "marking": {
+            "backend_nodes_considered": 127,
+            "attempted": 127,
+            "marked": 127,
+            "failed": 0,
+            "skipped_non_element": 0,
+            "success_rate": 1.0,
+            "failure_examples": []
+          }
+        }
+      ],
+      "phase_error": null,
+      "dynamic_error": null,
+      "verdict": "pass"
+    }
+  ],
+  "summary": {
+    "total_targets": 21,
+    "evaluated_targets": 20,
+    "not_testable_targets": 1,
+    "ax_hits": 15,
+    "ax_misses": 5,
+    "ax_hit_rate": 0.75,
+    "pages_pass": 3,
+    "pages_warn": 2,
+    "pages_fail": 0,
+    "overall_coverage": 0.9934,
+    "overall_verdict": "warn",
+    "recommendation": "采用 AXTree + DOM 混合方案；对 warn 页面和 DOM 可见但 AXTree 未命中的目标保留确定性 DOM 定位。",
+    "risks": [
+      "1 个目标缺少运行参数，未精确验证"
+    ]
+  }
+}

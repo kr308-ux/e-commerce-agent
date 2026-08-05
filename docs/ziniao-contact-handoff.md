@@ -608,6 +608,7 @@ web-ui/creator_contact/management/commands/run_creator_contact_worker.py
    不盲点按钮。
 6. 验证邀请按钮点击/幂等确认后立即写入 `ContactedCreator`；批量卡片阶段再精确核验
    项目成员、聊天对象和服务端送达证据，不得用卡片失败撤销邀请去重。
-7. 为 Windows 增加对应 MCP/Agent/Worker 启动脚本，并继续补充页面 fixture。
+7. Windows 已增加单实例 Supervisor、进程组清理、精确紫鸟模式校验和常驻邮件
+   Worker；仍需按 `docs/windows-runtime-acceptance.md` 在客户机完成实机验收。
 
 不要自动执行 commit、merge 或 push，除非用户在新会话中明确要求。

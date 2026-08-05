@@ -45,10 +45,14 @@
 ## 达人合作邮件
 
 `web-ui/mailing/` 从一个已确认导入批次筛选包含合法邮箱的达人，并创建全局防重队列。
-同一 `creator_id` 发送成功后不会从其他批次重复入队。创建队列后会自动启动一次性邮件
-发送进程，逐封串行处理当前队列，每次实际尝试之间随机等待 30–60 秒。单封邮件每天
+同一 `creator_id` 发送成功后不会从其他批次重复入队。系统启动期间由受守护的常驻邮件
+Worker 轮询队列，逐封串行处理，每次实际尝试之间随机等待 30–60 秒。达人联系任务结束
+后，已完成合作卡片终态验收且有邮箱的达人会自动、幂等地进入邮件队列；联系 Worker
+无需等待邮件完成即可继续下一项联系任务。单封邮件每天
 最多尝试 3 次；当天仍失败的记录会保留完整尝试历史，并在次日恢复为可继续发送状态。
-发送进程日志写入 `logs/YYYY-MM-DD/regular/email-sender.log`。
+进程在 SMTP 结果落库前中断时，邮件会进入“送达状态待确认”，不会自动重发。运行日志
+按日期保存 14 个自然日，发送日志位于
+`logs/YYYY-MM-DD/regular/email-sender.log`。
 
 ## 环境配置
 
@@ -71,8 +75,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-windows.ps1
 ```dotenv
 DEEPSEEK_API_KEY=
 DEEPSEEK_MODEL=deepseek/deepseek-v4-flash
-IMPORT_RULE_MODEL=deepseek/deepseek-v4-pro
-DOM_FALLBACK_MODEL=deepseek/deepseek-v4-pro
+IMPORT_RULE_MODEL=deepseek/deepseek-v4-flash
+DOM_FALLBACK_MODEL=deepseek/deepseek-v4-flash
 
 ZINIAO_COMPANY=
 ZINIAO_USERNAME=
@@ -87,7 +91,7 @@ GMAIL_APP_PASSWORD=
 确定性状态机执行，不逐步调用大模型。可恢复步骤第一次失败后先恢复上一成功检查点，
 再由状态机执行一次；第二次仍失败时，才先从 CDP Accessibility Tree 经本地规则
 筛出少量候选，AX 无法确认时再用裁剪后的可交互 DOM 补充候选。
-`DOM_FALLBACK_MODEL`（默认 `deepseek/deepseek-v4-pro`）只能返回当前
+`DOM_FALLBACK_MODEL`（默认 `deepseek/deepseek-v4-flash`）只能返回当前
 快照中的 `candidateId`，CSS/XPath 由本地生成并通过唯一、可见、可用校验。
 交互成功后定位器写入 `ZINIAO_ADAPTIVE_LOCATOR_PATH`，同一页面目标最多保留 3 条，
 下次与固定定位器一起在完整等待窗口内按成功率和新鲜度轮询；渲染期间的临时 miss
@@ -111,8 +115,13 @@ Windows：
 .\scripts\start-windows.ps1
 ```
 
-启动脚本同时运行 Django、达人导入 Worker、达人联系 Worker 和定向合作同步 Worker。
-启动顺序为：先启动 Django，再预启动并验收当前紫鸟店铺首页，最后启动各 Worker。
+非技术用户也可以直接双击 `scripts\start-windows.cmd`。
+
+启动脚本先启动一个单实例 Supervisor，由它守护 Django、达人导入 Worker、达人联系
+Worker、定向合作同步 Worker 和邮件 Worker。任一子进程异常退出会按退避策略重启；
+Ctrl+C 会先请求优雅退出，再清理残留进程。启动顺序为：先启动 Django，再预启动并
+验收当前紫鸟店铺首页，最后启动各 Worker。Supervisor 每次启动还会清理超过
+`LOG_RETENTION_DAYS`（默认 14 天）的日期日志目录。
 如果店铺浏览器的 DevTools 端点和首页标签页仍然有效，启动过程会直接复用现有浏览器，
 不会重新启动紫鸟 WebDriver 端口或重复调用店铺 `startBrowser`。达人联系页会持续显示
 店铺首页就绪状态、复用方式和 DevTools 端口。
@@ -121,6 +130,9 @@ Windows：
 如果启动时出现登录或验证码页面，启动流程会保持等待；请直接在已打开的店铺浏览器
 完成验证。进入店铺首页后流程会自动继续，再启动各 Worker。默认等待时间不设上限，
 可通过 `ZINIAO_BROWSER_LOGIN_WAIT_SECONDS` 配置最长等待秒数。
+
+Windows 首次部署和人工验收步骤见
+[`docs/windows-runtime-acceptance.md`](docs/windows-runtime-acceptance.md)。
 
 也可以手动执行同一项幂等检查：
 
@@ -167,3 +179,7 @@ git diff --check
 - 无关列、完整原始行和原始文件不写数据库；
 - 大模型只能返回通过 Schema 和业务校验的白名单规则；
 - 日志不得保存密钥、密码、Cookie、完整源数据或服务器文件路径。
+- SQLite 默认使用 WAL 以改善本地读写并发，但仍只有一个 writer；系统只启动一个
+  联系 Worker 和一个串行邮件 Worker，并对安全的纯数据库领取操作做有限锁重试。
+- 不确定的 SMTP 结果必须先在 Gmail 已发送记录中人工核对，再选择“确认已发送”或
+  “核对后重试”。
