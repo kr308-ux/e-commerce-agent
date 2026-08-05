@@ -3,6 +3,9 @@
 .venv/
 venv/
 
+# OpenCode runtime state
+.sisyphus/run-continuation/
+
 # Python
 __pycache__/
 *.py[cod]
