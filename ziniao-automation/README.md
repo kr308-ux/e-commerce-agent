@@ -13,8 +13,9 @@
 > 硬约束：本项目只能使用
 > `--run_type=web_driver --ipc_type=http --port=...` 主进程打开紫鸟。禁止先启动普通
 > 紫鸟工作台、从普通工作台点击“启动”打开店铺，禁止直接启动店铺 Chromium，也不能
-> 用普通浏览器或人工操作替代自动化终态验收。macOS 连接前会同时校验本地 HTTP 端口
-> 和主进程参数；任一不匹配都会失败关闭。
+> 用普通浏览器或人工操作替代自动化终态验收。macOS 和 Windows 连接前都会同时校验
+> 本地 HTTP 端口和主进程参数；任一不匹配都会失败关闭。Windows 通过 CIM 读取精确
+> `ziniao.exe` PID、路径和命令行，不再按进程名批量结束。
 
 ## 配置
 
@@ -30,6 +31,7 @@ ZINIAO_REQUEST_TIMEOUT_SECONDS=120
 ZINIAO_CORE_TIMEOUT_SECONDS=600
 ZINIAO_DRIVER_DIR=temporary/ziniao-webdrivers
 ZINIAO_REUSE_BROWSER_SESSION=true
+ZINIAO_PRIVACY_MODE=false
 ZINIAO_BROWSER_SESSION_DIR=temporary/ziniao-browser-sessions
 ZINIAO_BROWSER_PROBE_TIMEOUT_SECONDS=2
 ZINIAO_BROWSER_LOCK_TIMEOUT_SECONDS=30
@@ -49,6 +51,8 @@ HTTP 单次超时不得低于 120 秒。驱动下载到 Git 忽略的 `temporary
 `temporary/ziniao-browser-sessions/`。后续独立 Agent 进程会先验证 UUID，再附加
 同一个浏览器，并通过 CDP 激活上一次保留的“查找达人”标签页。设置
 `ZINIAO_REUSE_BROWSER_SESSION=false` 可临时关闭跨进程复用。
+`ZINIAO_PRIVACY_MODE=true` 会让 WebDriver 通过紫鸟官方 `privacyMode` 启动店铺，
+使用 `chrome_anonymous_<店铺ID>` 临时环境，不加载原店铺环境的持久化站点数据。
 
 Django 统一启动脚本会在服务端进程启动后执行 `prepare_ziniao_browser`：它附加或
 启动目标店铺浏览器，验收一个已完成加载的 TikTok Shop 店铺首页标签页，把无敏感信息
