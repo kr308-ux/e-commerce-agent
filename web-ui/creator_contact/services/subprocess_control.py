@@ -12,6 +12,7 @@ from pathlib import Path
 from django.db import OperationalError
 
 from creator_contact.models import CreatorContactTask
+from shared.db import retry_locked_database_operation
 from shared.logger import JsonlAuditLogger, project_log_root
 
 
@@ -20,6 +21,26 @@ POLL_INTERVAL_SECONDS = 0.25
 
 class TaskCancellationRequested(RuntimeError):
     """Raised after a cancelled task's active subprocess has been stopped."""
+
+
+def _record_active_process(
+    task_id: object,
+    process_id: int | None,
+    *,
+    expected_process_id: int | None = None,
+) -> bool:
+    def update() -> int:
+        queryset = CreatorContactTask.objects.filter(pk=task_id)
+        if expected_process_id is not None:
+            queryset = queryset.filter(
+                active_process_id=expected_process_id
+            )
+        return queryset.update(active_process_id=process_id)
+
+    try:
+        return retry_locked_database_operation(update) == 1
+    except OperationalError:
+        return False
 
 
 def task_cancellation_requested(task_id: object) -> bool:
@@ -131,6 +152,11 @@ def run_task_subprocess(
             duration_ms=(time.perf_counter() - started_at) * 1000,
         )
         raise
+    if not _record_active_process(task_id, process.pid):
+        _terminate_process_tree(process)
+        raise RuntimeError(
+            "无法持久化自动化子进程 PID，已停止进程以避免失控。"
+        )
     deadline = time.monotonic() + timeout
     while True:
         if task_cancellation_requested(task_id):
@@ -149,6 +175,11 @@ def run_task_subprocess(
                     "stderr": stderr,
                 },
                 duration_ms=(time.perf_counter() - started_at) * 1000,
+            )
+            _record_active_process(
+                task_id,
+                None,
+                expected_process_id=process.pid,
             )
             raise TaskCancellationRequested("达人联系任务已由用户终止。")
         remaining = deadline - time.monotonic()
@@ -172,6 +203,11 @@ def run_task_subprocess(
                     "message": f"子进程超过 {timeout} 秒。",
                 },
                 duration_ms=(time.perf_counter() - started_at) * 1000,
+            )
+            _record_active_process(
+                task_id,
+                None,
+                expected_process_id=process.pid,
             )
             raise subprocess.TimeoutExpired(
                 command,
@@ -202,5 +238,10 @@ def run_task_subprocess(
                 "stderr": stderr,
             },
             duration_ms=(time.perf_counter() - started_at) * 1000,
+        )
+        _record_active_process(
+            task_id,
+            None,
+            expected_process_id=process.pid,
         )
         return completed

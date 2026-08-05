@@ -527,6 +527,11 @@
                         <span class="status-pill status-{{ contact_task.status|lower }}">
                             <i></i>{{ contact_task.get_status_display|default:contact_task.status }}
                         </span>
+                        {% if contact_task.review_required_count %}
+                        <span class="review-badge" title="存在需人工复核的达人">
+                            {{ contact_task.review_required_count }} 需复核
+                        </span>
+                        {% endif %}
                     </td>
                     <td>
                         <div class="table-progress">
@@ -542,6 +547,9 @@
                     </td>
                     <td>
                         <a class="row-arrow" href="{% url 'creator_contact:task_detail' contact_task.id %}" aria-label="查看联系任务">→</a>
+                        {% if contact_task.review_required_count %}
+                        <a class="review-link" href="{% url 'creator_contact:task_detail' contact_task.id %}#review">去复核</a>
+                        {% endif %}
                     </td>
                 </tr>
                 {% empty %}

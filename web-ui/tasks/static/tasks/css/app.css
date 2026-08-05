@@ -4515,6 +4515,19 @@ tbody tr:hover {
   color: var(--ink-muted);
 }
 
+.mail-uncertain-actions {
+  display: flex;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mail-uncertain-actions .secondary-button {
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 10px;
+}
+
 .status-sending {
   color: var(--blue);
   background: var(--blue-pale);
@@ -4533,6 +4546,11 @@ tbody tr:hover {
 .status-retry_waiting {
   color: #a45d16;
   background: #fff0dd;
+}
+
+.status-uncertain {
+  color: #9a5b11;
+  background: #fff0cf;
 }
 
 .status-retry_waiting i {

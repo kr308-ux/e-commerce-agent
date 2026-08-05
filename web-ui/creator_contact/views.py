@@ -20,6 +20,7 @@ from tasks.models import ImportTask
 from .forms import CreatorContactTaskForm, GreetingTemplateForm
 from .models import (
     CollaborationSyncJob,
+    ContactedCreator,
     CreatorContactTarget,
     CreatorContactTask,
     DirectedCollaborationOption,
@@ -392,12 +393,25 @@ def task_detail(
         "creator"
     ).order_by("rank")
     steps = contact_task.steps.select_related("target").order_by("sequence")
+    review_statuses = {
+        CreatorContactTarget.Status.FAILED,
+        CreatorContactTarget.Status.REVIEW_REQUIRED,
+        CreatorContactTarget.Status.SKIPPED,
+        CreatorContactTarget.Status.INVITATION_COMPLETED,
+    }
+    review_targets = [
+        target
+        for target in targets
+        if target.status in review_statuses
+    ]
     return render(
         request,
         "creator_contact/task_detail.html",
         {
             "contact_task": contact_task,
             "targets": targets,
+            "review_targets": review_targets,
+            "review_targets_count": len(review_targets),
             "steps": steps,
             "invitation_completed_count": targets.filter(
                 invitation_created=True
@@ -500,11 +514,14 @@ def start_task(
                 "--control-port",
                 str(worker_port),
             ]
+            popen_kwargs = {
+                "cwd": settings.PROJECT_ROOT,
+                "close_fds": True,
+                **new_process_group_kwargs(),
+            }
             subprocess.Popen(
                 command,
-                cwd=settings.PROJECT_ROOT,
-                close_fds=True,
-                start_new_session=True,
+                **popen_kwargs,
             )
             if not wait_for_worker_endpoint(
                 worker_host,
@@ -619,6 +636,159 @@ def cancel_task(
 
 
 @require_POST
+def retry_task(
+    request: HttpRequest,
+    task_id,
+) -> HttpResponse:
+    """Requeue a finished task; retry clean failures and pending cards."""
+    with transaction.atomic():
+        contact_task = get_object_or_404(
+            CreatorContactTask.objects.select_for_update(),
+            pk=task_id,
+        )
+        if contact_task.status not in {
+            CreatorContactTask.Status.FAILED,
+            CreatorContactTask.Status.PARTIAL_SUCCESS,
+        }:
+            payload = {
+                "success": False,
+                "error": "只有失败或部分成功的联系达人任务可以重试。",
+                "status": contact_task.status,
+            }
+            if "application/json" in request.headers.get("Accept", ""):
+                return JsonResponse(payload, status=409)
+            return redirect(
+                "creator_contact:task_detail",
+                task_id=contact_task.pk,
+            )
+        now = timezone.now()
+        contact_task.status = CreatorContactTask.Status.PENDING
+        contact_task.current_step = ""
+        contact_task.error_code = ""
+        contact_task.error_message = ""
+        contact_task.finished_at = None
+        contact_task.final_summary = {}
+        contact_task.save()
+        contact_task.targets.filter(
+            status__in={
+                CreatorContactTarget.Status.FAILED,
+                CreatorContactTarget.Status.INVITATION_COMPLETED,
+            },
+        ).update(
+            status=CreatorContactTarget.Status.PENDING,
+            current_step="",
+            error_code="",
+            error_message="",
+            finished_at=None,
+            updated_at=now,
+        )
+
+    payload = {
+        "success": True,
+        "taskId": str(contact_task.pk),
+        "status": contact_task.status,
+        "message": (
+            "任务已重新排队：干净失败的达人将重走完整流程，"
+            "邀请完成的达人将只重试合作卡片发送。"
+        ),
+    }
+    if "application/json" in request.headers.get("Accept", ""):
+        return JsonResponse(payload)
+    return redirect(
+        "creator_contact:task_detail",
+        task_id=contact_task.pk,
+    )
+
+
+@require_POST
+def confirm_review_target(
+    request: HttpRequest,
+    task_id,
+    target_id,
+) -> HttpResponse:
+    """Confirm a review-required target and register store-level dedup."""
+    with transaction.atomic():
+        contact_task = get_object_or_404(
+            CreatorContactTask.objects.select_for_update(),
+            pk=task_id,
+        )
+        target = get_object_or_404(
+            CreatorContactTarget.objects.select_for_update(),
+            pk=target_id,
+            task=contact_task,
+        )
+        confirmable_statuses = {
+            CreatorContactTarget.Status.FAILED,
+            CreatorContactTarget.Status.REVIEW_REQUIRED,
+            CreatorContactTarget.Status.SKIPPED,
+            CreatorContactTarget.Status.INVITATION_COMPLETED,
+        }
+        if target.status not in confirmable_statuses:
+            payload = {
+                "success": False,
+                "error": "只有未完成的达人可以确认完成。",
+                "status": target.status,
+            }
+            if "application/json" in request.headers.get("Accept", ""):
+                return JsonResponse(payload, status=409)
+            return redirect(
+                "creator_contact:task_detail",
+                task_id=contact_task.pk,
+            )
+        now = timezone.now()
+        target.status = CreatorContactTarget.Status.SUCCESS
+        target.current_step = "已人工复核确认完成"
+        target.error_code = ""
+        target.error_message = ""
+        target.finished_at = now
+        target.save(
+            update_fields=[
+                "status",
+                "current_step",
+                "error_code",
+                "error_message",
+                "finished_at",
+                "updated_at",
+            ]
+        )
+        ContactedCreator.objects.update_or_create(
+            store_id=contact_task.store_id,
+            normalized_handle=target.normalized_handle,
+            defaults={
+                "creator_handle": target.creator_handle_snapshot,
+                "chat_creator_id": target.chat_creator_id or "",
+                "creator": target.creator,
+                "contact_task": contact_task,
+                "greeting_sha256": contact_task.greeting_sha256,
+                "invitation_id": target.actual_invitation_id or "",
+                "invitation_name": contact_task.invitation_name_snapshot,
+                "evidence": {
+                    "contactScope": "store_creator",
+                    "contactStage": "MANUAL_REVIEW_CONFIRMED",
+                    "targetId": target.pk,
+                    "messageSent": target.message_sent,
+                    "creatorId": target.chat_creator_id or "",
+                    "invitationGroupId": target.invitation_group_id,
+                },
+            },
+        )
+
+    payload = {
+        "success": True,
+        "taskId": str(contact_task.pk),
+        "targetId": target.pk,
+        "status": target.status,
+        "message": "已确认完成并加入店铺级联系记录，下次选人将自动排除。",
+    }
+    if "application/json" in request.headers.get("Accept", ""):
+        return JsonResponse(payload)
+    return redirect(
+        "creator_contact:task_detail",
+        task_id=contact_task.pk,
+    )
+
+
+@require_POST
 def sync_collaborations(request: HttpRequest) -> HttpResponse:
     store_id = _store_id(request)
     if not store_id:
@@ -651,3 +821,4 @@ def sync_collaborations(request: HttpRequest) -> HttpResponse:
             status=202,
         )
     return redirect("creator_contact:dashboard")
+from shared.processes import new_process_group_kwargs

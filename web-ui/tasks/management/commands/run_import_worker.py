@@ -3,8 +3,9 @@
 import time
 
 from django.core.management.base import BaseCommand
-from django.db import transaction
+from django.utils import timezone
 
+from shared.db import retry_locked_database_operation
 from tasks.models import ImportTask
 from tasks.services.import_runner import cleanup_stale_sources, run_import_task
 
@@ -26,19 +27,28 @@ class Command(BaseCommand):
         if removed:
             self.stdout.write(f"已清理 {removed} 个过期导入临时目录。")
         while True:
-            with transaction.atomic():
-                task = (
-                    ImportTask.objects.select_for_update()
+            def claim_task():
+                candidate = (
+                    ImportTask.objects
                     .filter(status=ImportTask.Status.QUEUED)
                     .order_by("created_at")
                     .first()
                 )
-                if task is not None:
-                    task.status = ImportTask.Status.IMPORTING
-                    task.current_step = "导入 Worker 已领取任务"
-                    task.save(
-                        update_fields=["status", "current_step", "updated_at"]
-                    )
+                if candidate is None:
+                    return None
+                claimed = ImportTask.objects.filter(
+                    pk=candidate.pk,
+                    status=ImportTask.Status.QUEUED,
+                ).update(
+                    status=ImportTask.Status.IMPORTING,
+                    current_step="导入 Worker 已领取任务",
+                    updated_at=timezone.now(),
+                )
+                if claimed != 1:
+                    return None
+                return ImportTask.objects.get(pk=candidate.pk)
+
+            task = retry_locked_database_operation(claim_task)
             if task is None:
                 if options["once"]:
                     self.stdout.write("没有待执行的达人导入任务。")

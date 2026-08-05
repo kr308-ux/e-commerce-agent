@@ -1,12 +1,13 @@
 import time
 
 from django.core.management.base import BaseCommand
-from django.db import transaction
+from django.utils import timezone
 
 from creator_contact.models import CollaborationSyncJob
 from creator_contact.services.collaboration_sync import (
     CollaborationSyncRunner,
 )
+from shared.db import retry_locked_database_operation
 
 
 class Command(BaseCommand):
@@ -18,17 +19,27 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         while True:
-            with transaction.atomic():
-                job = (
+            def claim_job():
+                candidate = (
                     CollaborationSyncJob.objects
-                    .select_for_update()
                     .filter(status=CollaborationSyncJob.Status.PENDING)
                     .order_by("created_at")
                     .first()
                 )
-                if job is not None:
-                    job.status = CollaborationSyncJob.Status.RUNNING
-                    job.save(update_fields=["status", "updated_at"])
+                if candidate is None:
+                    return None
+                claimed = CollaborationSyncJob.objects.filter(
+                    pk=candidate.pk,
+                    status=CollaborationSyncJob.Status.PENDING,
+                ).update(
+                    status=CollaborationSyncJob.Status.RUNNING,
+                    updated_at=timezone.now(),
+                )
+                if claimed != 1:
+                    return None
+                return CollaborationSyncJob.objects.get(pk=candidate.pk)
+
+            job = retry_locked_database_operation(claim_job)
             if job is None:
                 if options["once"]:
                     self.stdout.write("没有待执行的定向合作同步任务。")

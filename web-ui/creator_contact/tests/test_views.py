@@ -4,9 +4,12 @@ from django.conf import settings
 from django.http import HttpResponse
 from django.test import override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from creator_contact.models import (
     CollaborationSyncJob,
+    ContactedCreator,
+    CreatorContactTarget,
     CreatorContactTask,
     GreetingTemplate,
 )
@@ -463,3 +466,231 @@ class CreatorContactViewTests(CreatorContactTestCase):
         )
 
         self.assertEqual(response.status_code, 409)
+
+    def test_retry_failed_task_resets_task_and_clean_failures(self):
+        task = self.create_contact_task(top_n=3)
+        freeze_task_targets(task)
+        targets = list(task.targets.order_by("rank"))
+        task.status = CreatorContactTask.Status.FAILED
+        task.error_code = "INVITATION_NOT_VERIFIED"
+        task.error_message = "邀请未验证"
+        task.finished_at = timezone.now()
+        task.save()
+        targets[0].status = CreatorContactTarget.Status.FAILED
+        targets[1].status = CreatorContactTarget.Status.INVITATION_COMPLETED
+        targets[1].message_sent = True
+        targets[1].invitation_created = True
+        targets[2].status = CreatorContactTarget.Status.REVIEW_REQUIRED
+        for t in targets:
+            t.save()
+
+        response = self.client.post(
+            reverse(
+                "creator_contact:retry_task",
+                kwargs={"task_id": task.pk},
+            ),
+            HTTP_ACCEPT="application/json",
+        )
+
+        task.refresh_from_db()
+        targets[0].refresh_from_db()
+        targets[1].refresh_from_db()
+        targets[2].refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["success"])
+        self.assertEqual(task.status, CreatorContactTask.Status.PENDING)
+        self.assertEqual(task.error_code, "")
+        self.assertIsNone(task.finished_at)
+        self.assertEqual(targets[0].status, CreatorContactTarget.Status.PENDING)
+        self.assertEqual(targets[1].status, CreatorContactTarget.Status.PENDING)
+        self.assertEqual(
+            targets[2].status,
+            CreatorContactTarget.Status.REVIEW_REQUIRED,
+        )
+
+    def test_retry_rejects_running_or_success_task(self):
+        task = self.create_contact_task(top_n=1)
+        freeze_task_targets(task)
+        task.status = CreatorContactTask.Status.SUCCESS
+        task.save()
+
+        response = self.client.post(
+            reverse(
+                "creator_contact:retry_task",
+                kwargs={"task_id": task.pk},
+            ),
+            HTTP_ACCEPT="application/json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(response.json()["success"])
+        task.refresh_from_db()
+        self.assertEqual(task.status, CreatorContactTask.Status.SUCCESS)
+
+    def test_confirm_review_marks_success_and_writes_dedup_record(self):
+        task = self.create_contact_task(top_n=1)
+        freeze_task_targets(task)
+        target = task.targets.get()
+        target.status = CreatorContactTarget.Status.REVIEW_REQUIRED
+        target.current_step = "存在写入证据，需人工复核"
+        target.error_code = "ZiniaoWorkflowError"
+        target.error_message = "第 10 步验收失败：目标邀请未保持选中状态。"
+        target.message_sent = True
+        target.chat_creator_id = "7493994012378827459"
+        target.save()
+
+        response = self.client.post(
+            reverse(
+                "creator_contact:confirm_review_target",
+                kwargs={
+                    "task_id": task.pk,
+                    "target_id": target.pk,
+                },
+            ),
+            HTTP_ACCEPT="application/json",
+        )
+
+        target.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["success"])
+        self.assertEqual(
+            target.status,
+            CreatorContactTarget.Status.SUCCESS,
+        )
+        self.assertEqual(target.current_step, "已人工复核确认完成")
+        self.assertEqual(target.error_code, "")
+        self.assertIsNotNone(target.finished_at)
+        record = ContactedCreator.objects.get(
+            store_id=task.store_id,
+            normalized_handle=target.normalized_handle,
+        )
+        self.assertEqual(record.contact_task_id, task.pk)
+        self.assertEqual(
+            record.evidence["contactStage"],
+            "MANUAL_REVIEW_CONFIRMED",
+        )
+
+    def test_confirm_review_rejects_non_review_required_target(self):
+        task = self.create_contact_task(top_n=1)
+        freeze_task_targets(task)
+        target = task.targets.get()
+        target.status = CreatorContactTarget.Status.SUCCESS
+        target.save()
+
+        response = self.client.post(
+            reverse(
+                "creator_contact:confirm_review_target",
+                kwargs={
+                    "task_id": task.pk,
+                    "target_id": target.pk,
+                },
+            ),
+            HTTP_ACCEPT="application/json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(response.json()["success"])
+        self.assertFalse(
+            ContactedCreator.objects.filter(
+                store_id=task.store_id,
+                normalized_handle=target.normalized_handle,
+            ).exists()
+        )
+
+    def test_confirm_review_is_idempotent_on_dedup_record(self):
+        task = self.create_contact_task(top_n=1)
+        freeze_task_targets(task)
+        target = task.targets.get()
+        target.status = CreatorContactTarget.Status.REVIEW_REQUIRED
+        target.save()
+        ContactedCreator.objects.create(
+            store_id=task.store_id,
+            normalized_handle=target.normalized_handle,
+            creator_handle=target.creator_handle_snapshot,
+            greeting_sha256=task.greeting_sha256,
+            invitation_id="7664550207413847821",
+            invitation_name=task.invitation_name_snapshot,
+            contact_task=task,
+        )
+
+        response = self.client.post(
+            reverse(
+                "creator_contact:confirm_review_target",
+                kwargs={
+                    "task_id": task.pk,
+                    "target_id": target.pk,
+                },
+            ),
+            HTTP_ACCEPT="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            ContactedCreator.objects.filter(
+                store_id=task.store_id,
+                normalized_handle=target.normalized_handle,
+            ).count(),
+            1,
+        )
+
+    def test_confirm_review_accepts_failed_target(self):
+        task = self.create_contact_task(top_n=1)
+        freeze_task_targets(task)
+        target = task.targets.get()
+        target.status = CreatorContactTarget.Status.FAILED
+        target.current_step = "联系达人失败"
+        target.error_code = "INVITATION_NOT_VERIFIED"
+        target.error_message = "未取得邀请证据"
+        target.save()
+
+        response = self.client.post(
+            reverse(
+                "creator_contact:confirm_review_target",
+                kwargs={
+                    "task_id": task.pk,
+                    "target_id": target.pk,
+                },
+            ),
+            HTTP_ACCEPT="application/json",
+        )
+
+        target.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["success"])
+        self.assertEqual(
+            target.status,
+            CreatorContactTarget.Status.SUCCESS,
+        )
+        self.assertEqual(target.current_step, "已人工复核确认完成")
+        self.assertTrue(
+            ContactedCreator.objects.filter(
+                store_id=task.store_id,
+                normalized_handle=target.normalized_handle,
+            ).exists()
+        )
+
+    def test_confirm_review_rejects_running_target(self):
+        task = self.create_contact_task(top_n=1)
+        freeze_task_targets(task)
+        target = task.targets.get()
+        target.status = CreatorContactTarget.Status.RUNNING
+        target.save()
+
+        response = self.client.post(
+            reverse(
+                "creator_contact:confirm_review_target",
+                kwargs={
+                    "task_id": task.pk,
+                    "target_id": target.pk,
+                },
+            ),
+            HTTP_ACCEPT="application/json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(response.json()["success"])
+        target.refresh_from_db()
+        self.assertEqual(
+            target.status,
+            CreatorContactTarget.Status.RUNNING,
+        )

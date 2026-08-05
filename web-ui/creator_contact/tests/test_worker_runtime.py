@@ -38,6 +38,10 @@ class WorkerRuntimeTests(SimpleTestCase):
             "creator_contact.services.subprocess_control."
             "_terminate_process_tree",
         ) as terminate, patch(
+            "creator_contact.services.subprocess_control."
+            "_record_active_process",
+            return_value=True,
+        ), patch(
             "creator_contact.services.subprocess_control.subprocess.Popen",
             return_value=process,
         ) as popen:

@@ -55,6 +55,12 @@
                 <button type="submit" class="secondary-button">终止任务</button>
             </form>
             {% endif %}
+            {% if contact_task.status == 'FAILED' or contact_task.status == 'PARTIAL_SUCCESS' %}
+            <form method="post" action="{% url 'creator_contact:retry_task' contact_task.id %}">
+                {% csrf_token %}
+                <button type="submit" class="create-button compact" title="失败达人重走完整流程，邀请完成的达人只重试发送卡片">重试一次</button>
+            </form>
+            {% endif %}
             <button type="button" class="create-button compact" data-refresh-page>刷新进度 ↻</button>
         </div>
     </section>
@@ -133,19 +139,27 @@
                 <div><dt>邀请完成</dt><dd>{{ invitation_completed_count|default:"0" }}</dd></div>
                 <div><dt>成功</dt><dd>{{ contact_task.final_summary.successCount|default:"0" }}</dd></div>
                 <div><dt>失败</dt><dd>{{ contact_task.final_summary.failedCount|default:"0" }}</dd></div>
+                <div><dt>需人工复核</dt><dd>{{ contact_task.final_summary.reviewRequiredCount|default:"0" }}</dd></div>
                 <div><dt>跳过</dt><dd>{{ contact_task.final_summary.skippedCount|default:"0" }}</dd></div>
                 <div><dt>执行 Session</dt><dd class="mono-small">{{ contact_task.opencode_session_id|default:"—" }}</dd></div>
             </dl>
         </article>
     </section>
 
-    <section class="panel result-panel">
+    <section class="panel result-panel" id="review">
         <div class="panel-heading">
             <div>
                 <span class="section-kicker">FROZEN TARGETS</span>
                 <h2>目标达人执行状态</h2>
             </div>
             <span class="steps-count">{{ targets|length }}</span>
+        </div>
+        <div class="target-filter-bar" data-target-filter>
+            <button type="button" class="target-filter-btn is-active" data-filter="all">全部 {{ targets|length }}</button>
+            <button type="button" class="target-filter-btn" data-filter="success">已完成</button>
+            <button type="button" class="target-filter-btn is-warning" data-filter="review">
+                需人工复核 {{ review_targets_count }}
+            </button>
         </div>
         <div class="table-wrap">
             <table class="data-table contact-target-table">
@@ -160,11 +174,12 @@
                         <th>发送验收</th>
                         <th>当前步骤</th>
                         <th>状态</th>
+                        <th>操作</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for target in targets %}
-                    <tr>
+                    <tr data-target-status="{{ target.status|lower }}">
                         <td><span class="candidate-rank">{{ target.rank }}</span></td>
                         <td>
                             <strong>{{ target.nickname_snapshot|default:target.creator_handle_snapshot }}</strong>
@@ -210,10 +225,18 @@
                                 <i></i>{{ target.get_status_display|default:target.status }}
                             </span>
                         </td>
+                        <td>
+                            {% if target.status == "FAILED" or target.status == "REVIEW_REQUIRED" or target.status == "SKIPPED" or target.status == "INVITATION_COMPLETED" %}
+                            <form method="post" action="{% url 'creator_contact:confirm_review_target' contact_task.id target.id %}">
+                                {% csrf_token %}
+                                <button type="submit" class="secondary-button compact">确认完成</button>
+                            </form>
+                            {% else %}—{% endif %}
+                        </td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="9" class="empty-cell">目标达人尚未冻结，请等待 Worker 领取任务。</td>
+                        <td colspan="10" class="empty-cell">目标达人尚未冻结，请等待 Worker 领取任务。</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -281,4 +304,37 @@
 
 {% block extra_js %}
 <script src="{% static 'creator_contact/contact.js' %}" defer></script>
+<script>
+(function () {
+    const bar = document.querySelector("[data-target-filter]");
+    if (!bar) return;
+    const rows = Array.from(
+        document.querySelectorAll(".contact-target-table tbody tr[data-target-status]")
+    );
+    const reviewStatuses = new Set([
+        "failed",
+        "review_required",
+        "skipped",
+        "invitation_completed",
+    ]);
+    bar.addEventListener("click", function (event) {
+        const button = event.target.closest(".target-filter-btn");
+        if (!button) return;
+        bar.querySelectorAll(".target-filter-btn").forEach(function (btn) {
+            btn.classList.toggle("is-active", btn === button);
+        });
+        const filter = button.getAttribute("data-filter");
+        rows.forEach(function (row) {
+            const status = row.getAttribute("data-target-status");
+            let visible = true;
+            if (filter === "success") {
+                visible = status === "success";
+            } else if (filter === "review") {
+                visible = reviewStatuses.has(status);
+            }
+            row.style.display = visible ? "" : "none";
+        });
+    });
+})();
+</script>
 {% endblock %}

@@ -239,6 +239,55 @@ class ContactRunnerTests(CreatorContactTestCase):
         )
         self.assertEqual(result.final_summary["cardPendingCount"], 1)
 
+    def test_card_review_required_marks_target_for_manual_review(self):
+        task = self.create_contact_task(top_n=1)
+        freeze_task_targets(task)
+        target = task.targets.get()
+        target.status = CreatorContactTarget.Status.INVITATION_COMPLETED
+        target.message_sent = True
+        target.invitation_created = True
+        target.save()
+
+        def card(current_task, current_target):
+            return {
+                "success": False,
+                "creator": f"@{current_target.normalized_handle}",
+                "invitationGroupId": current_task.invitation_id_snapshot,
+                "cardSent": False,
+                "targetPlanMessageVerified": False,
+                "finalSendVerified": False,
+                "reviewRequired": True,
+                "errorCode": "CARD_NOT_FOUND_AFTER_RETRY",
+                "errorMessage": "多次关闭重开聊天后仍未识别到定向合作卡片。",
+                "cardRetryCount": 2,
+                "steps": [],
+            }
+
+        result = CreatorContactRunner(
+            task,
+            executor=self.invitation_executor,
+            card_executor=card,
+        ).run()
+
+        target.refresh_from_db()
+        self.assertEqual(
+            target.status,
+            CreatorContactTarget.Status.REVIEW_REQUIRED,
+        )
+        self.assertEqual(target.current_step, "存在写入证据，需人工复核")
+        self.assertEqual(target.error_code, "CARD_NOT_FOUND_AFTER_RETRY")
+        self.assertFalse(target.card_sent)
+        self.assertFalse(
+            ContactedCreator.objects.filter(
+                store_id=task.store_id,
+                normalized_handle=target.normalized_handle,
+            ).exists()
+        )
+        self.assertEqual(
+            result.final_summary["reviewRequiredCount"],
+            1,
+        )
+
     def test_lost_dom_receipt_is_not_recovered_by_membership(self):
         task = self.create_contact_task(top_n=2)
         freeze_task_targets(task)

@@ -30,6 +30,16 @@ urlpatterns = [
         name="cancel_task",
     ),
     path(
+        "tasks/<uuid:task_id>/retry/",
+        views.retry_task,
+        name="retry_task",
+    ),
+    path(
+        "tasks/<uuid:task_id>/targets/<int:target_id>/confirm-review/",
+        views.confirm_review_target,
+        name="confirm_review_target",
+    ),
+    path(
         "collaborations/sync/",
         views.sync_collaborations,
         name="sync_collaborations",

@@ -2,16 +2,20 @@ import time
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
-from django.db import transaction
+from django.utils import timezone
 
 from creator_contact.models import CreatorContactTask
 from creator_contact.services.contact_runner import CreatorContactRunner
+from creator_contact.services.worker_recovery import (
+    recover_interrupted_contact_tasks,
+)
 from creator_contact.services.worker_runtime import (
     WORKER_CLAIMED_STEP,
     WORKER_WAITING_STEP,
     WorkerHealthServer,
     worker_endpoint_ready,
 )
+from shared.db import retry_locked_database_operation
 
 
 class Command(BaseCommand):
@@ -53,11 +57,17 @@ class Command(BaseCommand):
             self.stdout.write(
                 f"常驻达人联系 Worker 已监听 {host}:{port}"
             )
+            requeued, review_required = recover_interrupted_contact_tasks()
+            if requeued or review_required:
+                self.stdout.write(
+                    f"中断恢复：重新排队 {requeued} 个任务，"
+                    f"人工复核 {review_required} 个目标。"
+                )
 
         try:
             while True:
-                with transaction.atomic():
-                    tasks = CreatorContactTask.objects.select_for_update()
+                def claim_task():
+                    tasks = CreatorContactTask.objects.all()
                     if options["task_id"]:
                         tasks = tasks.filter(pk=options["task_id"])
                         if options["claimed_by_server"]:
@@ -69,9 +79,9 @@ class Command(BaseCommand):
                             tasks = tasks.filter(
                                 status=CreatorContactTask.Status.PENDING
                             )
-                        task = tasks.first()
+                        candidate = tasks.first()
                     elif options["server_mode"]:
-                        task = (
+                        candidate = (
                             tasks
                             .filter(
                                 status=CreatorContactTask.Status.RUNNING,
@@ -81,29 +91,49 @@ class Command(BaseCommand):
                             .first()
                         )
                     else:
-                        task = (
+                        candidate = (
                             tasks
                             .filter(status=CreatorContactTask.Status.PENDING)
                             .order_by("created_at")
                             .first()
                         )
-                    if task is not None:
-                        task.status = CreatorContactTask.Status.RUNNING
-                        task.current_step = (
-                            WORKER_CLAIMED_STEP
-                            if (
-                                options["claimed_by_server"]
-                                or options["server_mode"]
-                            )
-                            else "达人联系 Worker 已领取任务"
+                    if candidate is None:
+                        return None
+                    claimed_step = (
+                        WORKER_CLAIMED_STEP
+                        if (
+                            options["claimed_by_server"]
+                            or options["server_mode"]
                         )
-                        task.save(
-                            update_fields=[
-                                "status",
-                                "current_step",
-                                "updated_at",
-                            ]
+                        else "达人联系 Worker 已领取任务"
+                    )
+                    claim_filter = CreatorContactTask.objects.filter(
+                        pk=candidate.pk
+                    )
+                    if options["task_id"] and options["claimed_by_server"]:
+                        claim_filter = claim_filter.filter(
+                            status=CreatorContactTask.Status.RUNNING,
+                            current_step=WORKER_WAITING_STEP,
                         )
+                    elif options["server_mode"]:
+                        claim_filter = claim_filter.filter(
+                            status=CreatorContactTask.Status.RUNNING,
+                            current_step=WORKER_WAITING_STEP,
+                        )
+                    else:
+                        claim_filter = claim_filter.filter(
+                            status=CreatorContactTask.Status.PENDING
+                        )
+                    claimed = claim_filter.update(
+                        status=CreatorContactTask.Status.RUNNING,
+                        current_step=claimed_step,
+                        updated_at=timezone.now(),
+                    )
+                    if claimed != 1:
+                        return None
+                    return CreatorContactTask.objects.get(pk=candidate.pk)
+
+                task = retry_locked_database_operation(claim_task)
                 if task is None:
                     if options["once"]:
                         self.stdout.write(

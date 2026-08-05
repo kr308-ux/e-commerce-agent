@@ -1999,6 +1999,19 @@ class CreatorContactRunner:
                 locked.current_step = "定向合作卡片发送成功"
                 locked.error_code = ""
                 locked.error_message = ""
+            elif result.get("reviewRequired") is True:
+                locked.status = (
+                    CreatorContactTarget.Status.REVIEW_REQUIRED
+                )
+                locked.current_step = "存在写入证据，需人工复核"
+                locked.error_code = str(
+                    result.get("errorCode")
+                    or "CARD_REVIEW_REQUIRED"
+                )[:100]
+                locked.error_message = _redact(
+                    result.get("errorMessage")
+                    or "多次重试后仍未识别到定向合作卡片，需人工复核。"
+                )
             else:
                 locked.status = (
                     CreatorContactTarget.Status.INVITATION_COMPLETED
@@ -2083,6 +2096,12 @@ class CreatorContactRunner:
             "cardSentCount": cards_sent,
             "cardPendingCount": card_pending,
         }
+        self.task.email_dispatch_status = (
+            CreatorContactTask.EmailDispatchStatus.PENDING
+        )
+        self.task.active_process_id = None
+        self.task.email_dispatch_summary = {}
+        self.task.email_dispatched_at = None
         first_failure = self.task.targets.filter(
             status__in=(
                 CreatorContactTarget.Status.FAILED,
@@ -2097,6 +2116,19 @@ class CreatorContactRunner:
             self.task.error_code = ""
             self.task.error_message = ""
         self.task.save()
+        try:
+            from mailing.services.contact_dispatch import (
+                dispatch_contact_task_emails,
+            )
+
+            dispatch_contact_task_emails(self.task.pk)
+        except Exception as error:
+            from mailing.services.contact_dispatch import (
+                record_dispatch_failure,
+            )
+
+            record_dispatch_failure(self.task.pk, error)
+            self.task.refresh_from_db()
         return self.task
 
     def _cancellation_requested(self) -> bool:
@@ -2124,6 +2156,7 @@ class CreatorContactRunner:
         self.task.error_code = "TASK_CANCELLED"
         self.task.error_message = "达人联系任务已由用户终止。"
         self.task.finished_at = self.task.finished_at or now
+        self.task.active_process_id = None
         self.task.save()
         return self.task
 
@@ -2137,5 +2170,6 @@ class CreatorContactRunner:
         self.task.error_message = _redact(message)
         self.task.current_step = "联系达人任务失败"
         self.task.finished_at = timezone.now()
+        self.task.active_process_id = None
         self.task.save()
         return self.task

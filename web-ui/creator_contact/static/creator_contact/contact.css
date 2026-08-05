@@ -1094,3 +1094,72 @@
     flex-direction: column;
   }
 }
+
+.review-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fff7e6;
+  color: #d46b08;
+  border: 1px solid #ffd591;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.review-link {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  font-size: 12px;
+  color: #d46b08;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.review-link:hover {
+  text-decoration: underline;
+}
+
+.target-filter-bar {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 12px;
+  flex-wrap: wrap;
+}
+
+.target-filter-btn {
+  padding: 4px 14px;
+  border-radius: 999px;
+  border: 1px solid #d9d9d9;
+  background: #fff;
+  color: #555;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.target-filter-btn:hover {
+  border-color: #165dff;
+  color: #165dff;
+}
+
+.target-filter-btn.is-active {
+  background: #165dff;
+  border-color: #165dff;
+  color: #fff;
+}
+
+.target-filter-btn.is-warning {
+  color: #d46b08;
+}
+
+.target-filter-btn.is-warning.is-active {
+  background: #d46b08;
+  border-color: #d46b08;
+  color: #fff;
+}
