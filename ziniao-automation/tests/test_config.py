@@ -30,6 +30,28 @@ class ZiniaoConfigurationTests(unittest.TestCase):
         with self.assertRaises(ZiniaoConfigurationError):
             settings.validate()
 
+    def test_blank_client_path_uses_platform_default(self) -> None:
+        environment = {
+            "ZINIAO_COMPANY": "company",
+            "ZINIAO_USERNAME": "username",
+            "ZINIAO_PASSWORD": "password",
+            "ZINIAO_CLIENT_PATH": "",
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            settings = ZiniaoSettings.from_env()
+        self.assertNotEqual(str(settings.client_path), ".")
+
+    def test_privacy_mode_can_be_enabled_from_environment(self) -> None:
+        environment = {
+            "ZINIAO_COMPANY": "company",
+            "ZINIAO_USERNAME": "username",
+            "ZINIAO_PASSWORD": "password",
+            "ZINIAO_PRIVACY_MODE": "true",
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            settings = ZiniaoSettings.from_env()
+        self.assertTrue(settings.privacy_mode)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import platform
+import json
+import os
 import socket
 import subprocess
 import time
@@ -28,6 +30,8 @@ class ZiniaoProcessManager:
             return False
 
     def _main_process_running(self) -> bool:
+        if self.system == "Windows":
+            return bool(self._windows_processes())
         if self.system == "Darwin":
             result = subprocess.run(
                 ["pgrep", "-x", "ziniao"],
@@ -38,8 +42,42 @@ class ZiniaoProcessManager:
             return result.returncode == 0
         return False
 
+    def _windows_processes(self) -> tuple[dict[str, object], ...]:
+        if self.system != "Windows":
+            return ()
+        command = (
+            "Get-CimInstance Win32_Process -Filter "
+            "\"Name = 'ziniao.exe'\" | "
+            "Select-Object ProcessId,ExecutablePath,CommandLine | "
+            "ConvertTo-Json -Compress"
+        )
+        try:
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command", command],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return ()
+        if result.returncode != 0 or not result.stdout.strip():
+            return ()
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return ()
+        rows = payload if isinstance(payload, list) else [payload]
+        return tuple(row for row in rows if isinstance(row, dict))
+
     def _main_process_commands(self) -> Sequence[str]:
-        """Return macOS Ziniao main-process commands without shell expansion."""
+        """Return Ziniao main-process commands without shell expansion."""
+        if self.system == "Windows":
+            return tuple(
+                str(row.get("CommandLine") or "")
+                for row in self._windows_processes()
+                if row.get("CommandLine")
+            )
         if self.system != "Darwin":
             return ()
         pgrep_result = subprocess.run(
@@ -73,7 +111,7 @@ class ZiniaoProcessManager:
 
     def webdriver_mode_running(self) -> bool:
         """Require the existing macOS main process to be WebDriver HTTP mode."""
-        if self.system != "Darwin":
+        if self.system not in {"Darwin", "Windows"}:
             return self.endpoint_ready()
         expected_arguments = (
             "--run_type=web_driver",
@@ -88,7 +126,10 @@ class ZiniaoProcessManager:
     def assert_webdriver_mode(self) -> None:
         if not self.endpoint_ready():
             raise ZiniaoConnectionError("紫鸟 WebDriver HTTP 端口尚未就绪。")
-        if self.system == "Darwin" and not self.webdriver_mode_running():
+        if (
+            self.system in {"Darwin", "Windows"}
+            and not self.webdriver_mode_running()
+        ):
             raise ZiniaoConnectionError(
                 "检测到紫鸟不是 WebDriver 模式。只能使用 "
                 "--run_type=web_driver --ipc_type=http 启动；"
@@ -97,12 +138,37 @@ class ZiniaoProcessManager:
 
     def stop(self) -> None:
         if self.system == "Windows":
-            subprocess.run(
-                ["taskkill", "/f", "/t", "/im", "ziniao.exe"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
+            rows = self._windows_processes()
+            expected_path = os.path.normcase(
+                os.path.abspath(str(self.settings.client_path))
             )
+            process_ids = []
+            for row in rows:
+                executable = str(row.get("ExecutablePath") or "")
+                command = str(row.get("CommandLine") or "")
+                path_matches = executable and os.path.normcase(
+                    os.path.abspath(executable)
+                ) == expected_path
+                mode_matches = all(
+                    value in command
+                    for value in (
+                        "--run_type=web_driver",
+                        "--ipc_type=http",
+                        f"--port={self.settings.socket_port}",
+                    )
+                )
+                process_id = row.get("ProcessId")
+                if (path_matches or mode_matches) and str(
+                    process_id or ""
+                ).isdigit():
+                    process_ids.append(str(process_id))
+            for process_id in process_ids:
+                subprocess.run(
+                    ["taskkill", "/pid", process_id, "/t"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
         elif self.system == "Darwin":
             subprocess.run(
                 ["killall", "ziniao"],
@@ -124,7 +190,15 @@ class ZiniaoProcessManager:
             if not self.endpoint_ready() and not self._main_process_running():
                 return
             time.sleep(0.5)
-        if self.system == "Darwin" and self._main_process_running():
+        if self.system == "Windows" and self._main_process_running():
+            for process_id in process_ids:
+                subprocess.run(
+                    ["taskkill", "/pid", process_id, "/t", "/f"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+        elif self.system == "Darwin" and self._main_process_running():
             subprocess.run(
                 ["killall", "-KILL", "ziniao"],
                 stdout=subprocess.DEVNULL,

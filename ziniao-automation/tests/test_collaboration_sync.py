@@ -81,6 +81,29 @@ class TargetCollaborationSyncTests(unittest.TestCase):
         sleep.assert_called_once_with(1.625)
         element.click.assert_called_once_with()
 
+    def test_navigation_click_forces_site_window_open_into_current_tab(
+        self,
+    ) -> None:
+        driver = Mock()
+        element = Mock()
+        workflow = TargetCollaborationSync(driver)
+        with (
+            patch(
+                "ziniao_automation.actions.collaboration_sync.random.uniform",
+                return_value=1.25,
+            ),
+            patch(
+                "ziniao_automation.actions.collaboration_sync.time.sleep"
+            ),
+        ):
+            workflow._click_navigation_in_current_tab(element)
+
+        script = driver.execute_script.call_args.args[0]
+        self.assertIn("window.location.assign", script)
+        self.assertIn("target.click()", script)
+        self.assertIs(driver.execute_script.call_args.args[1], element)
+        driver.switch_to.new_window.assert_not_called()
+
     def test_sync_restores_original_tab_and_closes_temporary_tabs(
         self,
     ) -> None:
@@ -179,6 +202,122 @@ class TargetCollaborationSyncTests(unittest.TestCase):
 
         self.assertEqual(selected, "affiliate-detail")
         driver.switch_to.window.assert_called_once_with("affiliate-detail")
+
+    def test_seller_affiliate_bridge_is_not_an_affiliate_window(self) -> None:
+        driver = Mock()
+        driver.window_handles = ["seller-landing"]
+        sync = TargetCollaborationSync(driver)
+        sync._window_urls = Mock(
+            return_value={
+                "seller-landing": (
+                    "https://seller.us.tiktokshopglobalselling.com/"
+                    "affiliate/landing?shop_region=US"
+                )
+            }
+        )
+
+        selected = sync._affiliate_window()
+
+        self.assertIsNone(selected)
+        driver.switch_to.window.assert_not_called()
+
+    def test_open_affiliate_from_store_reuses_tab_and_follows_bridge(
+        self,
+    ) -> None:
+        seller_home = (
+            "https://seller.us.tiktokshopglobalselling.com/homepage"
+        )
+        seller_bridge = (
+            "https://seller.us.tiktokshopglobalselling.com/"
+            "affiliate/landing?shop_region=US"
+        )
+        first_entry = dom_element(
+            "seller-affiliate",
+            tag="a",
+            text="Affiliate",
+            href=seller_bridge,
+        )
+        driver = Mock()
+        driver.current_url = seller_home
+        driver.current_window_handle = "seller"
+        driver.window_handles = ["seller"]
+        sync = TargetCollaborationSync(driver)
+        sync._seller_window = Mock(
+            side_effect=[
+                ("seller", seller_home),
+                ("seller", seller_home),
+                ("seller", seller_bridge),
+            ]
+        )
+        sync._affiliate_window = Mock(
+            side_effect=[None, None, None]
+        )
+        sync._affiliate_entry = Mock(return_value=first_entry)
+        sync._wait_for_document = Mock()
+        sync._wait = Mock(
+            side_effect=lambda condition, **_kwargs: condition(driver)
+        )
+
+        selected = sync._open_affiliate_from_store()
+
+        self.assertEqual(selected, "seller")
+        driver.switch_to.new_window.assert_not_called()
+        driver.switch_to.window.assert_called_once_with("seller")
+        self.assertEqual(
+            [call.args[0] for call in driver.get.call_args_list],
+            [seller_bridge],
+        )
+
+    def test_landing_target_card_accepts_direct_target_link(self) -> None:
+        direct_link = dom_element(
+            "target-link",
+            tag="a",
+            text="Manage target collaborations",
+            href=(
+                "https://affiliate.tiktokshopglobalselling.com/"
+                "connection/target-invitation?shop_id=2"
+            ),
+        )
+        driver = Mock()
+        driver.find_elements.side_effect = [
+            [direct_link],
+            [],
+            [],
+            [],
+        ]
+        sync = TargetCollaborationSync(driver)
+
+        selected = sync._landing_target_card()
+
+        self.assertIs(selected, direct_link)
+
+    def test_landing_target_card_accepts_react_onclick_wrapper(self) -> None:
+        label = dom_element(
+            "target-label",
+            tag="div",
+            text="定向合作设置",
+        )
+        card = dom_element(
+            "target-card",
+            tag="div",
+            text="定向合作设置 邀请你喜欢的达人",
+        )
+        driver = Mock()
+        driver.find_elements.side_effect = [
+            [],
+            [],
+            [],
+            [],
+            [label],
+            [],
+            [],
+        ]
+        driver.execute_script.return_value = card
+        sync = TargetCollaborationSync(driver)
+
+        selected = sync._landing_target_card()
+
+        self.assertIs(selected, card)
 
     def test_affiliate_entry_collapses_equivalent_visible_controls(
         self,

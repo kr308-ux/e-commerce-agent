@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+import json
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -90,6 +92,27 @@ class ZiniaoProcessManagerTests(unittest.TestCase):
             return_value=("/Applications/ziniao.app/Contents/MacOS/ziniao",),
         ):
             self.assertFalse(manager.webdriver_mode_running())
+
+    def test_windows_process_query_and_mode_validation(self) -> None:
+        manager = build_manager()
+        manager.system = "Windows"
+        payload = {
+            "ProcessId": 321,
+            "ExecutablePath": r"C:\Program Files\ziniao\ziniao.exe",
+            "CommandLine": (
+                r'"C:\Program Files\ziniao\ziniao.exe" '
+                "--run_type=web_driver --ipc_type=http --port=16851"
+            ),
+        }
+        with patch(
+            "ziniao_automation.process.subprocess.run",
+            return_value=SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(payload),
+            ),
+        ):
+            self.assertTrue(manager._main_process_running())
+            self.assertTrue(manager.webdriver_mode_running())
 
 
 if __name__ == "__main__":

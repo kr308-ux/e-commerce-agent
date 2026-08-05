@@ -65,6 +65,7 @@ class ZiniaoSettings:
         PROJECT_ROOT / "temporary" / "ziniao-browser-sessions"
     )
     reuse_browser_session: bool = True
+    privacy_mode: bool = False
     browser_probe_timeout_seconds: float = 2.0
     browser_lock_timeout_seconds: float = 30.0
     browser_home_timeout_seconds: float = 60.0
@@ -110,7 +111,10 @@ class ZiniaoSettings:
             browser_status_setting = PROJECT_ROOT / browser_status_setting
         settings = cls(
             credentials=credentials or ZiniaoCredentials.from_env(),
-            client_path=Path(os.getenv("ZINIAO_CLIENT_PATH", client_default)),
+            client_path=Path(
+                os.getenv("ZINIAO_CLIENT_PATH", "").strip()
+                or client_default
+            ),
             socket_port=int(os.getenv("ZINIAO_SOCKET_PORT", "16851")),
             request_timeout_seconds=int(
                 os.getenv("ZINIAO_REQUEST_TIMEOUT_SECONDS", "120")
@@ -123,6 +127,10 @@ class ZiniaoSettings:
             reuse_browser_session=_boolean_from_env(
                 "ZINIAO_REUSE_BROWSER_SESSION",
                 True,
+            ),
+            privacy_mode=_boolean_from_env(
+                "ZINIAO_PRIVACY_MODE",
+                False,
             ),
             browser_probe_timeout_seconds=float(
                 os.getenv("ZINIAO_BROWSER_PROBE_TIMEOUT_SECONDS", "2")

@@ -33,7 +33,10 @@ class SeleniumStoreSession:
     def connect(self) -> "SeleniumStoreSession":
         if self.driver is not None:
             return self
-        started = self.client.start_store(self.store)
+        started = self.client.start_store(
+            self.store,
+            privacy_mode=self.settings.privacy_mode,
+        )
         try:
             return self._attach_driver(started)
         except Exception:

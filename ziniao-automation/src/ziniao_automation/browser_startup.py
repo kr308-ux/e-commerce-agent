@@ -139,20 +139,26 @@ def _activate_store_home(driver: WebDriver) -> tuple[str, str] | None:
     return None
 
 
-def _active_store_login(driver: WebDriver) -> str:
+def _target_page_urls(driver: WebDriver) -> list[str]:
+    """Read top-level page target URLs without activating any window.
+
+    Uses CDP ``Target.getTargets`` instead of ``switch_to.window`` so waiting
+    for login does not raise the store browser to the front or un-minimize it.
+    """
     try:
-        handles = list(driver.window_handles)
+        payload = driver.execute_cdp_cmd("Target.getTargets", {})
     except WebDriverException:
-        return ""
-    for handle in handles:
-        try:
-            driver.switch_to.window(handle)
-            current_url = str(driver.current_url or "")
-            if is_store_login_url(current_url) and _document_ready(driver):
-                return current_url
-        except WebDriverException:
+        return []
+    if not isinstance(payload, dict):
+        return []
+    urls: list[str] = []
+    for target in payload.get("targetInfos", []):
+        if not isinstance(target, dict) or target.get("type") != "page":
             continue
-    return ""
+        url = str(target.get("url") or "")
+        if url:
+            urls.append(url)
+    return urls
 
 
 def _wait_for_store_home(
@@ -165,29 +171,35 @@ def _wait_for_store_home(
 ) -> tuple[str, str]:
     deadline = time.monotonic() + timeout_seconds
     stable_url = ""
-    stable_title = ""
     stable_since = 0.0
     login_url = ""
     waiting_for_login = False
     login_deadline: float | None = None
+    last_activation = float("-inf")
     while True:
         now = time.monotonic()
-        home = _activate_store_home(driver)
-        if home is not None:
-            current_url, title = home
-            if current_url != stable_url:
-                stable_url = current_url
-                stable_title = title
+        urls = _target_page_urls(driver)
+        home_url = next(
+            (url for url in urls if is_store_home_url(url)),
+            "",
+        )
+        if home_url:
+            if home_url != stable_url:
+                stable_url = home_url
                 stable_since = now
-                if stable_seconds <= 0:
-                    return stable_url, stable_title
-            elif now - stable_since >= stable_seconds:
-                return stable_url, stable_title
+            if stable_seconds <= 0 or now - stable_since >= stable_seconds:
+                if now - last_activation >= 1.0:
+                    last_activation = now
+                    activated = _activate_store_home(driver)
+                    if activated is not None:
+                        return activated
         else:
             stable_url = ""
-            stable_title = ""
             stable_since = 0.0
-            current_login_url = _active_store_login(driver)
+            current_login_url = next(
+                (url for url in urls if is_store_login_url(url)),
+                "",
+            )
             if current_login_url:
                 if not waiting_for_login:
                     waiting_for_login = True
@@ -209,18 +221,12 @@ def _wait_for_store_home(
         elif now >= deadline:
             break
         time.sleep(0.25)
-    visible_urls: list[str] = []
-    try:
-        for handle in driver.window_handles:
-            try:
-                driver.switch_to.window(handle)
-                url = str(driver.current_url or "")
-                if url:
-                    visible_urls.append(url)
-            except WebDriverException:
-                continue
-    except WebDriverException:
-        pass
+    visible_urls = _target_page_urls(driver)
+    if not visible_urls:
+        try:
+            visible_urls = [str(driver.current_url or "")]
+        except WebDriverException:
+            pass
     summary = ", ".join(visible_urls[:5]) or "没有可读取的页面"
     raise ZiniaoConnectionError(
         "店铺浏览器已连接，但未在限定时间内发现可验收的 TikTok Shop "

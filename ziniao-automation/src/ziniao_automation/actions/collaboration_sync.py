@@ -419,10 +419,40 @@ class TargetCollaborationSync:
         except ElementClickInterceptedException:
             self.driver.execute_script("arguments[0].click();", element)
 
+    def _click_navigation_in_current_tab(self, element: WebElement) -> None:
+        """Click a read-only link while reusing the current browser tab."""
+        time.sleep(round(random.uniform(1.0, 2.0), 3))
+        self.driver.execute_script(
+            """
+            const target = arguments[0];
+            target.scrollIntoView({block: 'center'});
+            const originalOpen = window.open;
+            window.open = function(url) {
+              if (url) {
+                window.location.assign(String(url));
+                return window;
+              }
+              return originalOpen.apply(window, arguments);
+            };
+            window.setTimeout(() => {
+              if (window.open !== originalOpen) {
+                window.open = originalOpen;
+              }
+            }, 10000);
+            target.click();
+            """,
+            element,
+        )
+
     @staticmethod
     def _is_target_url(url: str) -> bool:
-        return urlparse(str(url or "")).path.rstrip("/") == (
-            TARGET_INVITATION_PATH
+        parsed = urlparse(str(url or ""))
+        host = (parsed.hostname or "").lower()
+        return (
+            parsed.scheme in {"http", "https"}
+            and TargetCollaborationSync._is_trusted_shop_host(host)
+            and host.startswith("affiliate.")
+            and parsed.path.rstrip("/") == TARGET_INVITATION_PATH
         )
 
     @staticmethod
@@ -452,11 +482,6 @@ class TargetCollaborationSync:
             if str((query.get("shop_id") or [""])[0]).strip():
                 return 450
             return 400
-        if (
-            (host.startswith("seller.") or host.startswith("shop."))
-            and path.startswith("/affiliate")
-        ):
-            return 300
         return 0
 
     def _window_urls(self) -> dict[str, str]:
@@ -558,6 +583,16 @@ class TargetCollaborationSync:
             and not path.startswith(("/login", "/signin"))
         )
 
+    @staticmethod
+    def _is_seller_affiliate_landing_url(url: str) -> bool:
+        parsed = urlparse(str(url or ""))
+        host = (parsed.hostname or "").lower()
+        return (
+            TargetCollaborationSync._is_trusted_shop_host(host)
+            and host.startswith(("seller.", "shop."))
+            and parsed.path.rstrip("/").lower() == "/affiliate/landing"
+        )
+
     def _seller_window(self) -> tuple[str, str] | None:
         handles = list(self.driver.window_handles)
         urls = self._window_urls()
@@ -622,7 +657,11 @@ class TargetCollaborationSync:
                 and host.startswith("affiliate.")
             ):
                 return "affiliate-center", 950
-            if path.startswith("/affiliate"):
+            if (
+                cls._is_trusted_shop_host(host)
+                and host.startswith(("seller.", "shop."))
+                and path.startswith("/affiliate")
+            ):
                 return "affiliate-landing", (
                     1000 if path == "/affiliate/landing" else 900
                 )
@@ -694,25 +733,74 @@ class TargetCollaborationSync:
         )
 
     def _open_affiliate_from_store(self) -> str | None:
-        """Navigate a temporary tab in the same logged-in store browser."""
+        """Reuse a seller tab and navigate it into the Affiliate Center."""
         seller = self._seller_window()
         if seller is None:
             return None
-        _seller_handle, seller_url = seller
-        self.driver.switch_to.new_window("tab")
-        self.driver.get(seller_url)
-        self._wait_for_document()
-        entry = self._wait(
-            lambda _driver: self._affiliate_entry() or False,
-            message=(
-                "已复用店铺浏览器，但店铺首页未找到可确认的"
-                "“联盟/Affiliate”入口。"
-            ),
-        )
-        self._click_read_only(entry)
+        self.driver.switch_to.window(seller[0])
+
+        # Reuse the seller tab.  Its /affiliate/landing bridge already contains
+        # the target-collaboration card, so it is a valid navigation surface but
+        # not an affiliate.* window from which a direct URL can be synthesized.
+        for _hop in range(3):
+            affiliate = self._affiliate_window()
+            if affiliate is not None:
+                return affiliate
+
+            seller = self._seller_window()
+            if seller is None:
+                break
+            if self._is_seller_affiliate_landing_url(seller[1]):
+                return seller[0]
+            self._wait_for_document()
+            destination = self._wait(
+                lambda _driver: (
+                    ("affiliate", affiliate_handle)
+                    if (
+                        affiliate_handle := self._affiliate_window()
+                    )
+                    else (
+                        ("entry", entry)
+                        if (entry := self._affiliate_entry()) is not None
+                        else False
+                    )
+                ),
+                message=(
+                    "已复用店铺浏览器，但店铺页未找到可确认的"
+                    "“联盟/Affiliate”入口。"
+                ),
+            )
+            if destination[0] == "affiliate":
+                return str(destination[1])
+
+            entry = destination[1]
+            href = str(entry.get_attribute("href") or "").strip()
+            parsed = urlparse(href)
+            host = (parsed.hostname or "").lower()
+            path = parsed.path.rstrip("/").lower()
+            navigate_in_place = (
+                parsed.scheme in {"http", "https"}
+                and self._is_trusted_shop_host(host)
+                and (
+                    host.startswith("affiliate.")
+                    or (
+                        host.startswith(("seller.", "shop."))
+                        and path.startswith("/affiliate")
+                    )
+                )
+            )
+            if navigate_in_place:
+                self.driver.get(href)
+                self._wait_for_document()
+            else:
+                self._click_read_only(entry)
+
         return self._wait(
             lambda _driver: self._affiliate_window() or False,
-            message="从店铺首页进入联盟页面失败。",
+            message=(
+                "从店铺首页进入联盟页面失败：导航未到达"
+                " affiliate.* 联盟中心。"
+            ),
         )
 
     @staticmethod
@@ -746,7 +834,13 @@ class TargetCollaborationSync:
         )
 
     def _landing_target_card(self) -> WebElement | None:
-        candidates: dict[str, WebElement] = {}
+        raw_candidates: dict[str, WebElement] = {}
+        for element in self.driver.find_elements(
+            By.CSS_SELECTOR,
+            'a[href*="/connection/target-invitation"]',
+        ):
+            if self._visible(element):
+                raw_candidates[element.id] = element
         labels = (
             "定向合作设置",
             "Target collaboration settings",
@@ -758,10 +852,68 @@ class TargetCollaborationSync:
                 By.XPATH,
                 "//*[normalize-space()="
                 f"{literal}]"
-                "/ancestor::*[contains(@class, 'cursor-pointer')][1]",
+                "/ancestor-or-self::*[self::a or self::button "
+                "or @role='link' or @role='button' "
+                "or contains(@class, 'cursor-pointer')][1]",
             ):
                 if self._visible(element):
-                    candidates[element.id] = element
+                    raw_candidates[element.id] = element
+
+        if not raw_candidates:
+            for label in labels:
+                literal = _xpath_literal(label)
+                for text_element in self.driver.find_elements(
+                    By.XPATH,
+                    f"//*[normalize-space()={literal}]",
+                ):
+                    try:
+                        element = self.driver.execute_script(
+                            """
+                            for (
+                              let node = arguments[0], depth = 0;
+                              node && depth < 5;
+                              node = node.parentElement, depth += 1
+                            ) {
+                              if (typeof node.onclick === 'function') {
+                                return node;
+                              }
+                            }
+                            return null;
+                            """,
+                            text_element,
+                        )
+                    except StaleElementReferenceException:
+                        continue
+                    if element is not None and self._visible(element):
+                        raw_candidates[element.id] = element
+
+        # A card wrapper and its nested anchor are often both returned by the
+        # selectors above.  Collapse them to one semantic destination so a DOM
+        # wrapper change does not look like two different write-sensitive
+        # actions.
+        candidates: dict[str, WebElement] = {}
+        for raw_element in raw_candidates.values():
+            element = self._normalize_affiliate_action(raw_element)
+            try:
+                href = str(element.get_attribute("href") or "").strip()
+                parsed = urlparse(href)
+                host = (parsed.hostname or "").lower()
+                path = parsed.path.rstrip("/").lower()
+            except StaleElementReferenceException:
+                continue
+            if (
+                parsed.scheme in {"http", "https"}
+                and self._is_trusted_shop_host(host)
+                and host.startswith("affiliate.")
+                and path == TARGET_INVITATION_PATH
+            ):
+                shop_id = str(
+                    (parse_qs(parsed.query).get("shop_id") or [""])[0]
+                ).strip()
+                identity = f"target:{host}:{shop_id}"
+            else:
+                identity = f"element:{element.id}"
+            candidates[identity] = element
         if len(candidates) == 1:
             return next(iter(candidates.values()))
         if len(candidates) > 1:
@@ -795,7 +947,7 @@ class TargetCollaborationSync:
                 lambda _driver: self._landing_target_card() or False,
                 message="联盟首页未找到唯一“定向合作设置”入口。",
             )
-            self._click_read_only(card)
+            self._click_navigation_in_current_tab(card)
             self._wait(
                 lambda _driver: self._activate_target_window(),
                 message="点击“定向合作设置”后未进入定向合作列表。",

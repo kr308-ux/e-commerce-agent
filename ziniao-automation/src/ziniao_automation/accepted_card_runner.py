@@ -133,6 +133,40 @@ def main(argv: list[str] | None = None) -> int:
                         arguments.invitation_group_id,
                         confirm_send=True,
                     )
+                    if sent.evidence.get("cardSkipped") is True:
+                        results.append(
+                            {
+                                "success": False,
+                                "creator": creator,
+                                "creatorId": "",
+                                "invitationId": "",
+                                "invitationGroupId": (
+                                    arguments.invitation_group_id
+                                ),
+                                "cardSent": False,
+                                "targetPlanMessageVerified": False,
+                                "finalSendVerified": False,
+                                "reviewRequired": True,
+                                "errorCode": "CARD_NOT_FOUND_AFTER_RETRY",
+                                "errorMessage": (
+                                    "多次关闭重开聊天后仍未识别到定向合作卡片，"
+                                    "需人工复核。"
+                                ),
+                                "acceptedCreatorsPageVisible": True,
+                                "projectMembershipVerified": True,
+                                "recipientVerified": True,
+                                "cardRetryCount": sent.evidence.get(
+                                    "cardRetryCount"
+                                ),
+                                "steps": [
+                                    membership.to_dict(),
+                                    chat.to_dict(),
+                                    sent.to_dict(),
+                                ],
+                            }
+                        )
+                        continue
+                    closed = workflow.close_chat_drawer()
                     evidence = sent.evidence
                     results.append(
                         {
@@ -159,6 +193,9 @@ def main(argv: list[str] | None = None) -> int:
                             "acceptedCreatorsPageVisible": True,
                             "projectMembershipVerified": True,
                             "recipientVerified": True,
+                            "chatDrawerClosed": closed.evidence[
+                                "chatDrawerClosed"
+                            ],
                             "cdpClickRecoveryCount": (
                                 workflow._cdp_click_recovery_count
                             ),
@@ -166,11 +203,16 @@ def main(argv: list[str] | None = None) -> int:
                                 membership.to_dict(),
                                 chat.to_dict(),
                                 sent.to_dict(),
+                                closed.to_dict(),
                             ],
                         }
                     )
                 except Exception as error:
                     results.append(_creator_error(creator, error))
+
+            closed_project_tabs = workflow.close_project_accepted_creators_tab(
+                arguments.invitation_group_id,
+            )
 
             shared = {
                 "success": all(
@@ -186,6 +228,7 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 "steps": [opened.to_dict()],
                 "results": results,
+                **closed_project_tabs,
             }
             if len(creators) == 1 and not arguments.creators_json:
                 single = {

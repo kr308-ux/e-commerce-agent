@@ -42,6 +42,9 @@ class BrowserStartupTests(unittest.TestCase):
         driver.current_url = current_url
         driver.title = "TikTok Shop Seller Center"
         driver.execute_script.side_effect = ["complete", True]
+        driver.execute_cdp_cmd.return_value = {
+            "targetInfos": [{"type": "page", "url": current_url}]
+        }
 
         started = Mock(debugging_port=9222)
         session = Mock(driver=driver, started=started)
@@ -114,12 +117,12 @@ class BrowserStartupTests(unittest.TestCase):
         )
         with (
             patch(
-                "ziniao_automation.browser_startup._activate_store_home",
-                side_effect=[None, home],
+                "ziniao_automation.browser_startup._target_page_urls",
+                side_effect=[[login_url], [home[0]]],
             ),
             patch(
-                "ziniao_automation.browser_startup._active_store_login",
-                return_value=login_url,
+                "ziniao_automation.browser_startup._activate_store_home",
+                return_value=home,
             ),
             patch(
                 "ziniao_automation.browser_startup.time.monotonic",
@@ -145,12 +148,8 @@ class BrowserStartupTests(unittest.TestCase):
         )
         with (
             patch(
-                "ziniao_automation.browser_startup._activate_store_home",
-                return_value=None,
-            ),
-            patch(
-                "ziniao_automation.browser_startup._active_store_login",
-                return_value=login_url,
+                "ziniao_automation.browser_startup._target_page_urls",
+                return_value=[login_url],
             ),
             patch(
                 "ziniao_automation.browser_startup.time.monotonic",
@@ -168,6 +167,8 @@ class BrowserStartupTests(unittest.TestCase):
                     stable_seconds=0,
                     login_wait_seconds=1,
                 )
+
+        driver.switch_to.window.assert_not_called()
 
 
 if __name__ == "__main__":

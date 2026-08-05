@@ -2267,10 +2267,20 @@ class CreatorContactWorkflow:
             } else {
               element.textContent = value;
             }
+            element.dispatchEvent(new InputEvent('beforeinput', {
+              bubbles: true,
+              inputType: 'insertText',
+              data: value
+            }));
             element.dispatchEvent(new InputEvent('input', {
               bubbles: true,
               inputType: 'insertText',
               data: value
+            }));
+            element.dispatchEvent(new KeyboardEvent('keyup', {
+              bubbles: true,
+              key: 'End',
+              code: 'End'
             }));
             element.dispatchEvent(new Event('change', {bubbles: true}));
             """,

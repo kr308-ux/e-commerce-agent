@@ -45,6 +45,28 @@ class SeleniumStoreSessionTests(unittest.TestCase):
         driver.quit.assert_not_called()
         client.stop_store.assert_not_called()
 
+    def test_connect_forwards_configured_privacy_mode(self) -> None:
+        client = Mock()
+        client.start_store.return_value = self.started
+        settings = ZiniaoSettings(
+            credentials=ZiniaoCredentials("company", "user", "password"),
+            client_path=Path("/Applications/ziniao.app"),
+            privacy_mode=True,
+        )
+        session = SeleniumStoreSession(client, settings, self.store)
+
+        with patch.object(
+            session,
+            "_attach_driver",
+            return_value=session,
+        ):
+            session.connect()
+
+        client.start_store.assert_called_once_with(
+            self.store,
+            privacy_mode=True,
+        )
+
     def test_explicit_shutdown_closes_store_browser(self) -> None:
         client = Mock()
         driver = Mock()

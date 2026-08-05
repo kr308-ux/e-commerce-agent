@@ -18,6 +18,51 @@ from .collaboration_sync import TargetCollaborationSync
 from .creator_contact import CreatorContactWorkflow, WorkflowStepResult
 
 
+CHAT_DRAWER_CLOSE_SELECTORS = (
+    (
+        By.CSS_SELECTOR,
+        (
+            "body > div:nth-child(14) > div > div > div > "
+            "div.px-16.py-8.flex.items-center.justify-between."
+            "box-border.rounded-t-8.w-full > div:nth-child(2) > "
+            "button.core-btn.core-btn-text.core-btn-size-small."
+            "core-btn-shape-square.core-btn-icon-only."
+            "pulse-button.pulse-button-size-small.ml-8."
+            "core-btn-primary-text"
+        ),
+    ),
+    (
+        By.CSS_SELECTOR,
+        (
+            "div.px-16.py-8.flex.items-center.justify-between."
+            "box-border.rounded-t-8.w-full > div:nth-child(2) > "
+            "button.core-btn.core-btn-icon-only.pulse-button."
+            "core-btn-primary-text"
+        ),
+    ),
+    (
+        By.CSS_SELECTOR,
+        (
+            "div.px-16.py-8.flex.items-center.justify-between."
+            "box-border.rounded-t-8.w-full button.core-btn-icon-only"
+        ),
+    ),
+    (
+        By.XPATH,
+        (
+            "//div[contains(@class, 'rounded-t-8') and "
+            "contains(@class, 'px-16') and contains(@class, 'py-8')]"
+            "//button[contains(@class, 'core-btn-icon-only') and "
+            "(.//*[contains(@class, 'arco-icon-close')] or "
+            "@aria-label[contains(translate(., "
+            "'CLOSE', 'close'), 'close')] or "
+            "@title[contains(translate(., 'CLOSE', 'close'), "
+            "'close')])]"
+        ),
+    ),
+)
+
+
 class AcceptedCollaborationWorkflow(CreatorContactWorkflow):
     """Operate one exact project and one accepted creator."""
 
@@ -243,36 +288,18 @@ class AcceptedCollaborationWorkflow(CreatorContactWorkflow):
             timeout_seconds=self.timeout_seconds,
         )
         reused = self._activate_accepted_creators_window(name, group_id)
+        reused_closed = False
         if reused is not False:
-            details_clicked = self._ensure_creator_details_expanded()
-            accepted_count = len(self._visible_rows())
-            self._project_name = name
-            self._project_group_id = group_id
-            return WorkflowStepResult(
-                step=1,
-                action="open_project_accepted_creators",
-                success=True,
-                evidence={
-                    "invitationName": name,
-                    "invitationGroupId": group_id,
-                    "acceptedCreatorCount": accepted_count,
-                    "acceptedCreatorsPageVisible": True,
-                    "creatorDetailsClicked": details_clicked,
-                    "creatorDetailsExpanded": True,
-                    "currentUrl": reused["currentUrl"],
-                    "projectPageReused": True,
-                    "pageRefreshSkipped": True,
-                    "actionWaitSeconds": list(
-                        self._action_wait_seconds
-                    ),
-                    "refreshWaitSeconds": list(
-                        self._refresh_wait_seconds
-                    ),
-                    "cdpClickRecoveryCount": (
-                        self._cdp_click_recovery_count
-                    ),
-                },
-            )
+            try:
+                self.driver.switch_to.window(reused["handle"])
+                self.driver.close()
+                reused_closed = True
+            except Exception:
+                reused_closed = False
+            if self.driver.window_handles:
+                self.driver.switch_to.window(
+                    self.driver.window_handles[-1]
+                )
         if sync._affiliate_window() is None:
             self.open_find_creators()
             if sync._affiliate_window() is None:
@@ -345,6 +372,7 @@ class AcceptedCollaborationWorkflow(CreatorContactWorkflow):
                 "creatorDetailsExpanded": True,
                 "currentUrl": detail_window["currentUrl"],
                 "projectPageReused": False,
+                "reusedProjectPageClosed": reused_closed,
                 "pageRefreshSkipped": True,
                 "actionWaitSeconds": list(self._action_wait_seconds),
                 "refreshWaitSeconds": list(self._refresh_wait_seconds),
@@ -522,6 +550,86 @@ class AcceptedCollaborationWorkflow(CreatorContactWorkflow):
             },
         )
 
+    def _drawer_gone(self) -> bool:
+        if self._visible_message_composers():
+            return False
+        for _by, selector in CHAT_DRAWER_CLOSE_SELECTORS[:2]:
+            for candidate in self.driver.find_elements(_by, selector):
+                try:
+                    if self._is_visible(candidate):
+                        return False
+                except StaleElementReferenceException:
+                    continue
+        return True
+
+    def close_chat_drawer(self) -> WorkflowStepResult:
+        """Close the cooperation-chat drawer after a card is sent."""
+        close_button = self._first_clickable(
+            CHAT_DRAWER_CLOSE_SELECTORS,
+            missing_message="聊天抽屉未找到可点击的关闭按钮。",
+            timeout_seconds=min(10, self.timeout_seconds),
+        )
+        self._click(close_button)
+        self._wait(
+            lambda _driver: self._drawer_gone(),
+            message="点击关闭后聊天抽屉未消失。",
+            timeout_seconds=min(10, self.timeout_seconds),
+        )
+        return WorkflowStepResult(
+            step=3,
+            action="close_accepted_creator_chat_drawer",
+            success=True,
+            evidence={
+                "chatDrawerClosed": True,
+                "chatDrawerComposerGone": True,
+                "actionWaitSeconds": list(self._action_wait_seconds),
+                "cdpClickRecoveryCount": self._cdp_click_recovery_count,
+            },
+        )
+
+    def close_project_accepted_creators_tab(
+        self,
+        invitation_group_id: str,
+    ) -> dict[str, Any]:
+        """Close this task's project accepted-creators detail tab."""
+        group_id = str(invitation_group_id or "").strip()
+        closed_handle = ""
+        try:
+            for handle in reversed(list(self.driver.window_handles)):
+                self.driver.switch_to.window(handle)
+                stored_group_id = str(
+                    self.driver.execute_script(
+                        "return window.sessionStorage.getItem("
+                        "'ziniaoAcceptedProjectGroupId') || '';"
+                    )
+                    or ""
+                )
+                if (
+                    group_id
+                    and stored_group_id == group_id
+                    and handle not in {
+                        self._find_creators_handle,
+                        self._creator_detail_handle,
+                        self._chat_handle,
+                    }
+                ):
+                    closed_handle = handle
+                    self.driver.close()
+                    break
+        except Exception:
+            closed_handle = ""
+        if self.driver.window_handles:
+            try:
+                self.driver.switch_to.window(
+                    self.driver.window_handles[-1]
+                )
+            except Exception:
+                pass
+        return {
+            "projectAcceptedCreatorsTabClosed": bool(closed_handle),
+            "projectAcceptedCreatorsTabClosedHandle": closed_handle,
+        }
+
     def send_collaboration_card(
         self,
         creator: str,
@@ -529,6 +637,8 @@ class AcceptedCollaborationWorkflow(CreatorContactWorkflow):
         invitation_group_id: str,
         *,
         confirm_send: bool = False,
+        card_timeout_seconds: int | None = None,
+        card_retries: int = 2,
     ) -> WorkflowStepResult:
         """Send one exact project card and require strong message evidence."""
         _requested, handle = self.normalize_creator_handle(creator)
@@ -544,17 +654,58 @@ class AcceptedCollaborationWorkflow(CreatorContactWorkflow):
             raise ZiniaoWorkflowError(
                 "发送前置验收失败：项目或聊天达人不是任务目标。"
             )
-        card_match = self._wait(
-            lambda _driver: self._right_panel_invitation_card(
-                name,
-                invitation_group_id=group_id,
-            )
-            or False,
-            message=(
-                "目标达人聊天窗口未加载名称和 invitationGroupId "
-                "均精确匹配的唯一定向合作卡片。"
-            ),
+        card_timeout = min(
+            card_timeout_seconds or 10,
+            self.timeout_seconds,
         )
+
+        def find_card() -> tuple[WebElement, str, str] | None:
+            try:
+                result = self._wait(
+                    lambda _driver: self._right_panel_invitation_card(
+                        name,
+                        invitation_group_id=group_id,
+                    )
+                    or False,
+                    message=(
+                        "目标达人聊天窗口未加载名称和 invitationGroupId "
+                        "均精确匹配的唯一定向合作卡片。"
+                    ),
+                    timeout_seconds=card_timeout,
+                )
+            except ZiniaoWorkflowError:
+                return None
+            if result is False or result is None:
+                return None
+            return result
+
+        card_match = find_card()
+        retries_used = 0
+        while card_match is None and retries_used < card_retries:
+            retries_used += 1
+            self.close_chat_drawer()
+            self.open_creator_chat(creator)
+            card_match = find_card()
+        if card_match is None:
+            return WorkflowStepResult(
+                step=3,
+                action="send_accepted_creator_collaboration_card",
+                success=False,
+                evidence={
+                    "creatorHandle": handle,
+                    "invitationName": name,
+                    "invitationGroupId": group_id,
+                    "cardSent": False,
+                    "targetPlanMessageVerified": False,
+                    "finalSendVerified": False,
+                    "cardSkipped": True,
+                    "reviewRequired": True,
+                    "cardRetryCount": retries_used,
+                    "cardTimeoutSeconds": card_timeout,
+                    "actionWaitSeconds": list(self._action_wait_seconds),
+                    "cdpClickRecoveryCount": self._cdp_click_recovery_count,
+                },
+            )
         card, actual_group_id, invitation_id = card_match
         if actual_group_id != group_id:
             raise ZiniaoWorkflowError(
