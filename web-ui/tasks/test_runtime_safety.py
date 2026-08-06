@@ -118,29 +118,33 @@ class RuntimePrimitiveTests(SimpleTestCase):
         )
 
     def test_frozen_paths_split_writable_home_and_resources(self) -> None:
-        with patch.object(
-            runtime_paths.sys,
-            "frozen",
-            True,
-            create=True,
-        ), patch.object(
-            runtime_paths.sys,
-            "executable",
-            "/release/EcommerceAgent/EcommerceAgent.exe",
-        ), patch.object(
-            runtime_paths.sys,
-            "_MEIPASS",
-            "/release/EcommerceAgent/_internal",
-            create=True,
-        ):
-            self.assertEqual(
-                runtime_paths.app_home(),
-                Path("/release/EcommerceAgent"),
-            )
-            self.assertEqual(
-                runtime_paths.resource_root(),
-                Path("/release/EcommerceAgent/_internal"),
-            )
+        with TemporaryDirectory() as directory:
+            release_root = Path(directory) / "EcommerceAgent"
+            executable = release_root / "EcommerceAgent.exe"
+            resource_root = release_root / "_internal"
+            with patch.object(
+                runtime_paths.sys,
+                "frozen",
+                True,
+                create=True,
+            ), patch.object(
+                runtime_paths.sys,
+                "executable",
+                str(executable),
+            ), patch.object(
+                runtime_paths.sys,
+                "_MEIPASS",
+                str(resource_root),
+                create=True,
+            ):
+                self.assertEqual(
+                    runtime_paths.app_home(),
+                    release_root.resolve(),
+                )
+                self.assertEqual(
+                    runtime_paths.resource_root(),
+                    resource_root.resolve(),
+                )
 
     def test_frozen_commands_dispatch_through_allowlisted_flags(self) -> None:
         with patch(

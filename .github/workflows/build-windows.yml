@@ -47,9 +47,12 @@ jobs:
           ZINIAO_BROWSER_LOGIN_WAIT_SECONDS: "1"
         run: |
           python web-ui/manage.py check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python web-ui/manage.py test tasks creator_contact mailing --noinput
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:PYTHONPATH = "ziniao-automation/src"
           python -m unittest discover -s ziniao-automation/tests -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build one-folder executable
         shell: pwsh
