@@ -1,0 +1,56 @@
+name: Test supported platforms
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-tests:
+    name: Offline tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - macos-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.10"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install locked dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run Django offline tests
+        env:
+          DJANGO_SECRET_KEY: ci-test-only-not-a-business-secret
+          DJANGO_DEBUG: "true"
+          DATABASE_PATH: storage/platform-ci.db
+          ZINIAO_BROWSER_LOGIN_WAIT_SECONDS: "1"
+        run: |
+          python web-ui/manage.py check
+          python web-ui/manage.py test tasks creator_contact mailing --noinput
+
+      - name: Run Ziniao automation offline tests
+        env:
+          PYTHONPATH: ziniao-automation/src
+        run: python -m unittest discover -s ziniao-automation/tests -v

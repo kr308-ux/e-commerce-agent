@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from selenium.common.exceptions import (
     StaleElementReferenceException,
     TimeoutException,
 )
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 
 from ziniao_automation.actions.creator_contact import (
     APPROVED_GREETING_MESSAGE,
@@ -747,6 +748,144 @@ class CreatorContactWorkflowTests(unittest.TestCase):
             ],
             8,
         )
+
+    def test_search_selects_all_with_platform_modifier(self) -> None:
+        def run_search(platform_name: str):
+            driver = Mock()
+            driver.current_url = "https://example.test/connection/creator"
+            search_input = Mock()
+            search_input.get_attribute.return_value = "creator_id_123"
+            suggestion = Mock()
+            suggestion.text = "creator_id_123\nCreator"
+            result_row = Mock()
+            result_row.is_displayed.return_value = True
+            result_row.tag_name = "tr"
+            workflow = CreatorContactWorkflow(driver)
+            workflow._close_find_creators_obstruction = Mock(
+                return_value={
+                    "findCreatorsObstructionPresent": False,
+                    "findCreatorsObstructionClosed": False,
+                    "findCreatorsObstructionSelector": "",
+                }
+            )
+            workflow._first_clickable = Mock(
+                side_effect=[search_input, suggestion]
+            )
+            workflow._click = Mock()
+            workflow._wait = Mock(side_effect=[True, result_row])
+            with patch(
+                "ziniao_automation.keyboard.platform.system",
+                return_value=platform_name,
+            ):
+                workflow.search_creator("@creator_id_123")
+            return search_input.send_keys.call_args_list
+
+        cases = (
+            ("Windows", Keys.CONTROL, Keys.COMMAND),
+            ("Linux", Keys.CONTROL, Keys.COMMAND),
+            ("Darwin", Keys.COMMAND, Keys.CONTROL),
+        )
+        for platform_name, expected_modifier, wrong_modifier in cases:
+            with self.subTest(platform_name=platform_name):
+                calls = run_search(platform_name)
+                self.assertEqual(
+                    calls,
+                    [
+                        call(expected_modifier, "a"),
+                        call(Keys.BACKSPACE),
+                        call("creator_id_123"),
+                    ],
+                )
+                self.assertNotIn(call(wrong_modifier, "a"), calls)
+
+    def test_search_replaces_previous_creator_on_reused_page(self) -> None:
+        class StatefulSearchInput:
+            def __init__(self, value: str, modifier: str) -> None:
+                self.value = value
+                self.modifier = modifier
+                self.all_selected = False
+                self.calls: list[tuple[str, ...]] = []
+
+            def send_keys(self, *keys: str) -> None:
+                self.calls.append(keys)
+                if keys == (self.modifier, "a"):
+                    self.all_selected = True
+                    return
+                if keys == (Keys.BACKSPACE,):
+                    self.value = "" if self.all_selected else self.value[:-1]
+                    self.all_selected = False
+                    return
+                self.value += "".join(keys)
+
+            def get_attribute(self, name: str) -> str:
+                return self.value if name == "value" else ""
+
+        cases = (
+            ("Windows", Keys.CONTROL),
+            ("Darwin", Keys.COMMAND),
+        )
+        for platform_name, expected_modifier in cases:
+            with self.subTest(platform_name=platform_name):
+                driver = Mock()
+                driver.current_url = (
+                    "https://example.test/connection/creator"
+                )
+                search_input = StatefulSearchInput(
+                    "previous_creator",
+                    expected_modifier,
+                )
+                suggestion = Mock()
+                suggestion.text = "matched creator"
+                result_row = Mock()
+                result_row.is_displayed.return_value = True
+                result_row.tag_name = "tr"
+                workflow = CreatorContactWorkflow(driver)
+                workflow._close_find_creators_obstruction = Mock(
+                    return_value={
+                        "findCreatorsObstructionPresent": False,
+                        "findCreatorsObstructionClosed": False,
+                        "findCreatorsObstructionSelector": "",
+                    }
+                )
+                workflow._first_clickable = Mock(
+                    side_effect=[
+                        search_input,
+                        suggestion,
+                        search_input,
+                        suggestion,
+                    ]
+                )
+                workflow._click = Mock()
+
+                def wait(condition, *, message: str, **_kwargs):
+                    if "导入达人 ID 未完整写入" in message:
+                        self.assertTrue(condition(driver))
+                        return True
+                    return result_row
+
+                workflow._wait = Mock(side_effect=wait)
+
+                with patch(
+                    "ziniao_automation.keyboard.platform.system",
+                    return_value=platform_name,
+                ):
+                    first = workflow.search_creator("@creator_a")
+                    second = workflow.search_creator("@creator_b")
+
+                self.assertEqual(first.evidence["inputValue"], "creator_a")
+                self.assertEqual(second.evidence["inputValue"], "creator_b")
+                self.assertEqual(search_input.value, "creator_b")
+                self.assertEqual(
+                    search_input.calls,
+                    [
+                        (expected_modifier, "a"),
+                        (Keys.BACKSPACE,),
+                        ("creator_a",),
+                        (expected_modifier, "a"),
+                        (Keys.BACKSPACE,),
+                        ("creator_b",),
+                    ],
+                )
 
     def test_store_page_priority_rejects_extension_and_accepts_seller(
         self,

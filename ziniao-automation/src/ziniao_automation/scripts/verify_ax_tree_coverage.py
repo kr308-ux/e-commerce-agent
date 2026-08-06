@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import platform
 import sys
 import time
 import uuid
@@ -27,12 +26,12 @@ from selenium.common.exceptions import (
     StaleElementReferenceException,
 )
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
 
 from ..browser_connection import connect_reusable_store
 from ..config import ZiniaoSettings
+from ..keyboard import replace_element_text
 
 
 Locator = tuple[str, str]
@@ -1503,7 +1502,6 @@ def _find_exact_creator_element(
 
 def _type_creator(driver: WebDriver, creator: str) -> bool:
     bare = creator.strip().lstrip("@")
-    modifier = Keys.COMMAND if platform.system() == "Darwin" else Keys.CONTROL
 
     def enter(element: WebElement) -> bool:
         driver.execute_script(
@@ -1515,9 +1513,7 @@ def _type_creator(driver: WebDriver, creator: str) -> bool:
             element.click()
         except Exception:
             driver.execute_script("arguments[0].focus();", element)
-        element.send_keys(modifier, "a")
-        element.send_keys(Keys.BACKSPACE)
-        element.send_keys(bare)
+        replace_element_text(element, bare)
         return True
 
     return bool(_act_on_first_in_frames(driver, SEARCH_INPUT_SELECTORS, enter))

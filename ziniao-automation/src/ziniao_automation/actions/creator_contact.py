@@ -22,15 +22,15 @@ from selenium.common.exceptions import (
     StaleElementReferenceException,
     TimeoutException,
 )
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.by import By
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.support.ui import WebDriverWait
 
 from ..dom_fallback import DeepSeekDomFallback, is_dom_failure_message
 from ..errors import ZiniaoWorkflowError
+from ..keyboard import replace_element_text
 
 
 APPROVED_GREETING_MESSAGE = (
@@ -1368,9 +1368,7 @@ class CreatorContactWorkflow:
             missing_message="第 2 步失败：未找到达人搜索框。",
         )
         self._click(search_input)
-        search_input.send_keys(Keys.COMMAND, "a")
-        search_input.send_keys(Keys.BACKSPACE)
-        search_input.send_keys(bare_handle)
+        replace_element_text(search_input, bare_handle)
 
         self._wait(
             lambda _driver: search_input.get_attribute("value")
