@@ -46,6 +46,9 @@ class ZiniaoProcessManager:
         if self.system != "Windows":
             return ()
         command = (
+            "$utf8 = New-Object System.Text.UTF8Encoding($false); "
+            "[Console]::OutputEncoding = $utf8; "
+            "$OutputEncoding = $utf8; "
             "Get-CimInstance Win32_Process -Filter "
             "\"Name = 'ziniao.exe'\" | "
             "Select-Object ProcessId,ExecutablePath,CommandLine | "
@@ -56,15 +59,18 @@ class ZiniaoProcessManager:
                 ["powershell.exe", "-NoProfile", "-Command", command],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
                 check=False,
             )
         except (OSError, subprocess.TimeoutExpired):
             return ()
-        if result.returncode != 0 or not result.stdout.strip():
+        stdout = result.stdout or ""
+        if result.returncode != 0 or not stdout.strip():
             return ()
         try:
-            payload = json.loads(result.stdout)
+            payload = json.loads(stdout.lstrip("\ufeff"))
         except json.JSONDecodeError:
             return ()
         rows = payload if isinstance(payload, list) else [payload]

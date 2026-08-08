@@ -110,9 +110,44 @@ class ZiniaoProcessManagerTests(unittest.TestCase):
                 returncode=0,
                 stdout=json.dumps(payload),
             ),
-        ):
+        ) as run:
             self.assertTrue(manager._main_process_running())
             self.assertTrue(manager.webdriver_mode_running())
+
+        self.assertEqual(run.call_count, 2)
+        for call in run.call_args_list:
+            self.assertEqual(call.kwargs["encoding"], "utf-8")
+            self.assertEqual(call.kwargs["errors"], "replace")
+            self.assertIn(
+                "[Console]::OutputEncoding = $utf8",
+                call.args[0][-1],
+            )
+
+    def test_windows_process_query_tolerates_missing_stdout(self) -> None:
+        manager = build_manager()
+        manager.system = "Windows"
+        with patch(
+            "ziniao_automation.process.subprocess.run",
+            return_value=SimpleNamespace(returncode=0, stdout=None),
+        ):
+            self.assertEqual(manager._windows_processes(), ())
+
+    def test_windows_process_query_accepts_utf8_bom(self) -> None:
+        manager = build_manager()
+        manager.system = "Windows"
+        payload = {
+            "ProcessId": 321,
+            "ExecutablePath": "C:\\紫鸟\\ziniao.exe",
+            "CommandLine": "ziniao.exe --run_type=web_driver",
+        }
+        with patch(
+            "ziniao_automation.process.subprocess.run",
+            return_value=SimpleNamespace(
+                returncode=0,
+                stdout="\ufeff" + json.dumps(payload, ensure_ascii=False),
+            ),
+        ):
+            self.assertEqual(manager._windows_processes(), (payload,))
 
 
 if __name__ == "__main__":
