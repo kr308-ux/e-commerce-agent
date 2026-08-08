@@ -136,7 +136,7 @@ PyInstaller 描述成源码安全方案。
 EcommerceAgent.exe
     -> 默认：运行 run_runtime_supervisor
 
-EcommerceAgent.exe --internal-manage runserver 127.0.0.1:8000 --noreload
+EcommerceAgent.exe --internal-manage runserver 0.0.0.0:8000 --noreload
 EcommerceAgent.exe --internal-manage run_import_worker
 EcommerceAgent.exe --internal-manage run_creator_contact_worker --server-mode
 EcommerceAgent.exe --internal-manage run_collaboration_sync_worker

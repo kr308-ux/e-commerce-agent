@@ -46,7 +46,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument(
             "--address",
-            default="127.0.0.1:8000",
+            default="0.0.0.0:8000",
             help="Django runserver 地址。",
         )
         parser.add_argument(

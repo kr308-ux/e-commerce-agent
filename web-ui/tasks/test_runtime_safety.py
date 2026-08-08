@@ -234,7 +234,11 @@ class RuntimePrimitiveTests(SimpleTestCase):
         self.assertEqual(popen.call_count, 5)
         commands = [call.args[0] for call in popen.call_args_list]
         self.assertTrue(any("run_email_worker" in command for command in commands))
-        self.assertTrue(any("--noreload" in command for command in commands))
+        django_commands = [
+            command for command in commands if "--noreload" in command
+        ]
+        self.assertEqual(len(django_commands), 1)
+        self.assertIn("0.0.0.0:8000", django_commands[0])
         self.assertEqual(terminate.call_count, 5)
 
 

@@ -6,7 +6,8 @@ if not exist "%APP_HOME%.env" (
   pause
   exit /b 1
 )
-echo 正在启动系统。访问地址：http://127.0.0.1:8000/
+echo 正在启动系统。本机访问：http://127.0.0.1:8000/
+echo 局域网访问：http://本机局域网IP:8000/
 echo 按 Ctrl+C 可安全停止所有受管服务。
 "%APP_HOME%EcommerceAgent.exe"
 set "EXIT_CODE=%ERRORLEVEL%"
