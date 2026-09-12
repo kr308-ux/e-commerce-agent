@@ -6,6 +6,7 @@ from unittest.mock import Mock, call, patch
 from selenium.common.exceptions import (
     StaleElementReferenceException,
     TimeoutException,
+    WebDriverException,
 )
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -698,6 +699,43 @@ class CreatorContactWorkflowTests(unittest.TestCase):
             result.evidence["existingPageReloadedForRecovery"]
         )
 
+    def test_open_find_creators_ignores_already_maximized_driver_error(
+        self,
+    ) -> None:
+        driver = Mock()
+        driver.current_url = (
+            "https://example.test/affiliate/creator?shop_id=123"
+        )
+        driver.current_window_handle = "search"
+        driver.title = "Find creators"
+        driver.find_elements.return_value = []
+        driver.maximize_window.side_effect = WebDriverException(
+            "failed to change window state to 'normal', "
+            "current state is 'maximized'"
+        )
+        search_input = Mock()
+        workflow = CreatorContactWorkflow(driver)
+        workflow._wait_for_document = Mock()
+        workflow._activate_existing_find_creators = Mock(
+            return_value={
+                "handle": "search",
+                "url": driver.current_url,
+                "duplicateFindCreatorsTabsClosed": 0,
+            }
+        )
+        workflow._visible_find_creators_search_inputs = Mock(
+            return_value=[search_input]
+        )
+        workflow._wait = Mock(
+            side_effect=lambda condition, **_kwargs: condition(driver)
+        )
+
+        with patch("ziniao_automation.actions.creator_contact.time.sleep"):
+            result = workflow.open_find_creators()
+
+        self.assertTrue(result.success)
+        driver.maximize_window.assert_called_once_with()
+
     def test_search_closes_obstruction_and_types_imported_id_without_at(
         self,
     ) -> None:
@@ -909,6 +947,39 @@ class CreatorContactWorkflowTests(unittest.TestCase):
             ),
             3,
         )
+        self.assertEqual(
+            CreatorContactWorkflow._store_page_priority(
+                "https://affiliate.tiktokshopglobalselling.com/"
+                "affiliate/creator?shop_id=1"
+            ),
+            3,
+        )
+
+    def test_find_creators_list_url_accepts_current_and_legacy_routes(
+        self,
+    ) -> None:
+        valid_urls = (
+            "https://affiliate.example.test/connection/creator?shop_id=1",
+            "https://affiliate.example.test/connection/creator/",
+            "https://affiliate.example.test/affiliate/creator?shop_id=1",
+            "https://affiliate.example.test/AFFILIATE/CREATOR/",
+        )
+        invalid_urls = (
+            "https://affiliate.example.test/connection/creator/detail?id=1",
+            "https://affiliate.example.test/affiliate/creator/detail?id=1",
+            "https://affiliate.example.test/insights/transaction-analysis",
+        )
+
+        for url in valid_urls:
+            with self.subTest(url=url):
+                self.assertTrue(
+                    CreatorContactWorkflow._is_find_creators_list_url(url)
+                )
+        for url in invalid_urls:
+            with self.subTest(url=url):
+                self.assertFalse(
+                    CreatorContactWorkflow._is_find_creators_list_url(url)
+                )
 
     def test_find_creators_obstruction_uses_requested_selector(self) -> None:
         driver = Mock()
@@ -924,7 +995,7 @@ class CreatorContactWorkflowTests(unittest.TestCase):
         self.assertTrue(evidence["findCreatorsObstructionPresent"])
         self.assertTrue(evidence["findCreatorsObstructionClosed"])
         self.assertIn(
-            "#garfish_app_for_connection_x3s3dld3",
+            '[id^="garfish_app_for_creator_"]',
             evidence["findCreatorsObstructionSelector"],
         )
         workflow._click.assert_called_once_with(close_button)

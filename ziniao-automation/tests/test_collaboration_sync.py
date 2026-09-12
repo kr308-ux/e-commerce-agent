@@ -130,7 +130,7 @@ class TargetCollaborationSyncTests(unittest.TestCase):
         driver.current_window_handle = "original"
         driver.current_url = (
             "https://affiliate.tiktokshopglobalselling.com/"
-            "connection/target-invitation?shop_id=1"
+            "affiliate/collaboration/target-invitation?shop_id=1"
         )
         driver.window_handles = ["original"]
         sync = TargetCollaborationSync(driver)
@@ -357,13 +357,13 @@ class TargetCollaborationSyncTests(unittest.TestCase):
     def test_direct_target_url_discards_detail_only_parameters(self) -> None:
         current = (
             "https://affiliate.tiktokshopglobalselling.com/"
-            "connection/target-invitation/detail"
+            "affiliate/collaboration/target-invitation/detail"
             "?invitation_id=1&enter_from=list&shop_region=US&shop_id=2"
         )
 
         target = TargetCollaborationSync._direct_target_url(current)
 
-        self.assertIn("/connection/target-invitation?", target)
+        self.assertIn("/affiliate/collaboration/target-invitation?", target)
         self.assertIn("shop_region=US", target)
         self.assertIn("shop_id=2", target)
         self.assertIn("tab=1", target)

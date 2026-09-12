@@ -168,9 +168,31 @@ class AcceptedCollaborationWorkflow(CreatorContactWorkflow):
             )
         }
         if len(leaf_matches) != 1:
-            raise ZiniaoWorkflowError(
-                "目标项目行未找到唯一可点击的项目名称。"
-            )
+            # The current list adds a hidden "." element to the title for
+            # performance timing.  It turns the rendered exact text into
+            # "<name>." while keeping the visible project title unchanged.
+            title_containers: dict[str, WebElement] = {}
+            for element in row.find_elements(
+                By.CSS_SELECTOR,
+                "div.text-neutral-text1",
+            ):
+                try:
+                    text = " ".join(
+                        str(element.get_attribute("innerText") or "").split()
+                    )
+                    if (
+                        self._is_visible(element)
+                        and element.is_enabled()
+                        and text.startswith(invitation_name)
+                    ):
+                        title_containers[element.id] = element
+                except StaleElementReferenceException:
+                    continue
+            if len(title_containers) != 1:
+                raise ZiniaoWorkflowError(
+                    "目标项目行未找到唯一可点击的项目名称。"
+                )
+            return next(iter(title_containers.values()))
         return next(iter(leaf_matches.values()))
 
     def _activate_accepted_creators_window(
@@ -562,8 +584,88 @@ class AcceptedCollaborationWorkflow(CreatorContactWorkflow):
                     continue
         return True
 
+    def _persistent_chat_panel_visible(self) -> bool:
+        """Whether the current TikTok UI keeps chat in an unclosable modal.
+
+        The current affiliate UI renders chat as an ``imModal`` with no close
+        control.  That panel is released when its project tab is closed, so it
+        must not be mistaken for the previous closeable drawer.
+        """
+        try:
+            return self.driver.execute_script(
+                    """
+                    return Boolean(document.querySelector(
+                      '[role="dialog"].imModal-D_OP9p[data-modal-root="true"]'
+                    ));
+                    """
+                ) is True
+        except Exception:
+            return False
+
+    def _existing_sent_project_card(
+        self,
+        invitation_name: str,
+        invitation_group_id: str,
+    ) -> dict[str, Any] | None:
+        """Return verified evidence for one exact card already in this chat."""
+        expected_id = str(invitation_group_id or "").strip()
+        matches: list[WebElement] = []
+        messages = self.driver.find_elements(
+            By.CSS_SELECTOR,
+            ".chatd-message.chatd-message--right",
+        )
+        if not isinstance(messages, list):
+            return None
+        for message in messages:
+            try:
+                if not self._is_visible(message):
+                    continue
+                text = str(message.get_attribute("innerText") or "")
+                if (
+                    invitation_name in text
+                    and f"ID:{expected_id}" in text.replace(" ", "")
+                ):
+                    matches.append(message)
+            except StaleElementReferenceException:
+                continue
+        if not matches:
+            return None
+        evidence = self._chat_plan_card_evidence(invitation_name, None)
+        verified = list(evidence.get("verifiedPlanCards") or [])
+        # Every matching rendered card must have a verified target-plan
+        # message.  More than one can exist after an interrupted historical
+        # run; that is still an idempotent success, never a reason to send a
+        # third card.
+        if len(verified) < len(matches):
+            return None
+        latest = max(
+            verified,
+            key=lambda card: int(card.get("createTime") or 0),
+        )
+        invitation_id = str(latest.get("invitationId") or "")
+        if not invitation_id.isdigit():
+            return None
+        return {
+            **evidence,
+            "invitationId": invitation_id,
+            "matchedProjectCardInChat": True,
+        }
+
     def close_chat_drawer(self) -> WorkflowStepResult:
-        """Close the cooperation-chat drawer after a card is sent."""
+        """Close a legacy drawer, or defer persistent-panel cleanup to its tab."""
+        if self._persistent_chat_panel_visible():
+            return WorkflowStepResult(
+                step=3,
+                action="release_accepted_creator_chat_panel",
+                success=True,
+                evidence={
+                    "chatDrawerClosed": False,
+                    "chatDrawerComposerGone": False,
+                    "chatPanelPersistsUntilProjectTabClose": True,
+                    "actionWaitSeconds": list(self._action_wait_seconds),
+                    "cdpClickRecoveryCount": self._cdp_click_recovery_count,
+                },
+            )
         close_button = self._first_clickable(
             CHAT_DRAWER_CLOSE_SELECTORS,
             missing_message="聊天抽屉未找到可点击的关闭按钮。",
@@ -658,6 +760,44 @@ class AcceptedCollaborationWorkflow(CreatorContactWorkflow):
             card_timeout_seconds or 10,
             self.timeout_seconds,
         )
+
+        existing_delivery = self._existing_sent_project_card(name, group_id)
+        if (
+            existing_delivery is None
+            and self._persistent_chat_panel_visible()
+        ):
+            # The conversation history is populated asynchronously in the
+            # new persistent panel.  Give an already-sent exact card a brief
+            # chance to render before exposing any send control.
+            try:
+                existing_delivery = self._wait(
+                    lambda _driver: (
+                        self._existing_sent_project_card(name, group_id)
+                        or False
+                    ),
+                    message="新版聊天浮层尚未加载已有项目卡片。",
+                    timeout_seconds=min(5, self.timeout_seconds),
+                )
+            except ZiniaoWorkflowError:
+                existing_delivery = None
+        if existing_delivery is not None:
+            return WorkflowStepResult(
+                step=3,
+                action="send_accepted_creator_collaboration_card",
+                success=True,
+                evidence={
+                    **existing_delivery,
+                    "creatorHandle": handle,
+                    "invitationName": name,
+                    "invitationGroupId": group_id,
+                    "alreadySent": True,
+                    "cardSendButtonClicked": False,
+                    "cardSent": True,
+                    "finalSendVerified": True,
+                    "actionWaitSeconds": list(self._action_wait_seconds),
+                    "cdpClickRecoveryCount": self._cdp_click_recovery_count,
+                },
+            )
 
         def find_card() -> tuple[WebElement, str, str] | None:
             try:

@@ -294,6 +294,38 @@ class AcceptedCollaborationWorkflowTests(unittest.TestCase):
             ["server-accepted-1"],
         )
 
+    def test_existing_exact_chat_card_is_treated_as_sent(self) -> None:
+        workflow = self._ready_workflow()
+        evidence = self._plan_evidence(success=True)
+        workflow._existing_sent_project_card = Mock(return_value=evidence)
+        workflow._click = Mock()
+
+        result = workflow.send_collaboration_card(
+            "@highest",
+            "金色拉链+短裤13",
+            "7664550207413847821",
+            confirm_send=True,
+        )
+
+        self.assertTrue(result.success)
+        self.assertTrue(result.evidence["alreadySent"])
+        self.assertFalse(result.evidence["cardSendButtonClicked"])
+        workflow._click.assert_not_called()
+
+    def test_persistent_chat_panel_defers_cleanup_to_project_tab(self) -> None:
+        workflow = AcceptedCollaborationWorkflow(Mock())
+        workflow._persistent_chat_panel_visible = Mock(return_value=True)
+        workflow._first_clickable = Mock()
+
+        result = workflow.close_chat_drawer()
+
+        self.assertTrue(result.success)
+        self.assertFalse(result.evidence["chatDrawerClosed"])
+        self.assertTrue(
+            result.evidence["chatPanelPersistsUntilProjectTabClose"]
+        )
+        workflow._first_clickable.assert_not_called()
+
     def test_card_not_found_retries_close_and_reopen_then_skips(self) -> None:
         workflow = self._ready_workflow()
         workflow._right_panel_invitation_card = Mock(return_value=None)

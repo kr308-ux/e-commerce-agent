@@ -502,7 +502,10 @@ class CreatorContactViewTests(CreatorContactTestCase):
         self.assertEqual(task.error_code, "")
         self.assertIsNone(task.finished_at)
         self.assertEqual(targets[0].status, CreatorContactTarget.Status.PENDING)
-        self.assertEqual(targets[1].status, CreatorContactTarget.Status.PENDING)
+        self.assertEqual(
+            targets[1].status,
+            CreatorContactTarget.Status.INVITATION_COMPLETED,
+        )
         self.assertEqual(
             targets[2].status,
             CreatorContactTarget.Status.REVIEW_REQUIRED,

@@ -21,6 +21,7 @@ from selenium.common.exceptions import (
     ElementClickInterceptedException,
     StaleElementReferenceException,
     TimeoutException,
+    WebDriverException,
 )
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
@@ -44,12 +45,20 @@ APPROVED_GREETING_MESSAGE = (
 TARGET_COLLABORATION_RECOVERY_WAIT_SECONDS = 3.0
 
 FIND_CREATORS_RENDER_WAIT_SECONDS = 3.0
+FIND_CREATORS_LIST_PATHS = (
+    "/connection/creator",
+    "/affiliate/creator",
+)
+CREATOR_DETAIL_PATHS = (
+    "/connection/creator/detail",
+    "/affiliate/creator/detail",
+)
 
 FIND_CREATORS_OBSTRUCTION_CLOSE_SELECTORS = (
     (
         By.CSS_SELECTOR,
         (
-            "#garfish_app_for_connection_x3s3dld3 > div > "
+            '[id^="garfish_app_for_creator_"] > div > '
             "div:nth-child(2) > div.mb-16.rounded-8 > div > div > div > "
             "div.mb-16 > div > "
             "div.transition-all.duration-300.ease-out.opacity-100 > div > "
@@ -62,20 +71,7 @@ FIND_CREATORS_OBSTRUCTION_CLOSE_SELECTORS = (
     (
         By.CSS_SELECTOR,
         (
-            '[id^="garfish_app_for_connection_"] > div > '
-            "div:nth-child(2) > div.mb-16.rounded-8 > div > div > div > "
-            "div.mb-16 > div > "
-            "div.transition-all.duration-300.ease-out.opacity-100 > div > "
-            "div > div > div > div.mt-10.flex.items-center."
-            "justify-between.gap-12 > "
-            "div.flex.flex-none.items-center.gap-20.pl-8 > "
-            "div > div > button"
-        ),
-    ),
-    (
-        By.CSS_SELECTOR,
-        (
-            '[id^="garfish_app_for_connection_"] '
+            '[id^="garfish_app_for_creator_"] '
             "div.transition-all.duration-300.ease-out.opacity-100 > "
             "div.flex.h-32.flex-none.items-center.gap-8 "
             'button[role="switch"]'
@@ -84,17 +80,7 @@ FIND_CREATORS_OBSTRUCTION_CLOSE_SELECTORS = (
     (
         By.CSS_SELECTOR,
         (
-            "#garfish_app_for_connection_0lgo6vyn > div > "
-            "div:nth-child(2) > div.mb-16.rounded-8 > div > div > div > "
-            "div.mb-16 > div > "
-            "div.transition-all.duration-300.ease-out.opacity-100 > div > "
-            "div.flex.h-32.flex-none.items-center.gap-8 > div > button"
-        ),
-    ),
-    (
-        By.CSS_SELECTOR,
-        (
-            '[id^="garfish_app_for_connection_"] > div > '
+            '[id^="garfish_app_for_creator_"] > div > '
             "div:nth-child(2) > div.mb-16.rounded-8 > div > div > div > "
             "div.mb-16 > div > "
             "div.transition-all.duration-300.ease-out.opacity-100 > div > "
@@ -106,12 +92,19 @@ FIND_CREATORS_OBSTRUCTION_CLOSE_SELECTORS = (
 FIND_CREATORS_SEARCH_SELECTORS = (
     (By.CSS_SELECTOR, "input.core-input[type='text']"),
     (By.CSS_SELECTOR, "input[placeholder*='搜索姓名']"),
+    (By.CSS_SELECTOR, "input[placeholder*='商品']"),
+    (By.CSS_SELECTOR, "input[aria-label*='搜索姓名']"),
+    (By.CSS_SELECTOR, "input[aria-label*='商品']"),
     (By.CSS_SELECTOR, "input[placeholder*='Search']"),
     (
         By.XPATH,
-        "//input[@type='text' and "
+        "//input[(@type='text' or @type='search') and "
         "(contains(@placeholder, '姓名') "
         "or contains(@placeholder, '达人') "
+        "or contains(@placeholder, '商品') "
+        "or contains(@aria-label, '姓名') "
+        "or contains(@aria-label, '达人') "
+        "or contains(@aria-label, '商品') "
         "or contains(@placeholder, 'Search') "
         "or contains(@placeholder, 'search'))]",
     ),
@@ -870,10 +863,13 @@ class CreatorContactWorkflow:
 
     @staticmethod
     def _is_find_creators_list_url(url: str) -> bool:
-        return (
-            urlparse(str(url or "")).path.rstrip("/")
-            == "/connection/creator"
-        )
+        path = urlparse(str(url or "")).path.lower().rstrip("/")
+        return path in FIND_CREATORS_LIST_PATHS
+
+    @staticmethod
+    def _is_creator_detail_url(url: str) -> bool:
+        path = urlparse(str(url or "")).path.lower().rstrip("/")
+        return path in CREATOR_DETAIL_PATHS
 
     @staticmethod
     def _store_page_priority(url: object) -> int:
@@ -894,7 +890,7 @@ class CreatorContactWorkflow:
             ("/login", "/signin", "/account/login")
         ):
             return 0
-        if path == "/connection/creator":
+        if path in FIND_CREATORS_LIST_PATHS:
             return 3
         if host.startswith("affiliate.") or "/affiliate" in path:
             return 2
@@ -1028,7 +1024,11 @@ class CreatorContactWorkflow:
 
     def open_find_creators(self) -> WorkflowStepResult:
         """Step 1: open Affiliate and then the Find Creators page."""
-        self.driver.maximize_window()
+        try:
+            self.driver.maximize_window()
+        except WebDriverException as error:
+            if "current state is 'maximized'" not in str(error):
+                raise
         self._wait_for_document()
         reused_find_creators = self._activate_existing_find_creators()
         existing_page_reloaded_for_recovery = False
@@ -1106,11 +1106,12 @@ class CreatorContactWorkflow:
             )
 
         current_url = self.driver.current_url
-        if "/connection/creator" not in current_url.lower():
+        if not self._is_find_creators_list_url(current_url):
             try:
                 find_creators = self._first_clickable(
                     (
                         (By.CSS_SELECTOR, 'a[href*="/connection/creator"]'),
+                        (By.CSS_SELECTOR, 'a[href*="/affiliate/creator"]'),
                         (By.CSS_SELECTOR, 'a[href*="creator"]'),
                         (
                             By.XPATH,
@@ -1141,15 +1142,12 @@ class CreatorContactWorkflow:
                 ) from error
             self._click_and_wait_for_url(
                 find_creators,
-                url_markers=("/connection/creator",),
+                url_markers=FIND_CREATORS_LIST_PATHS,
                 failure_message="第 1 步失败：点击“寻找达人”后未进入达人搜索页。",
             )
 
         final_url = self.driver.current_url
-        if (
-            "/connection/creator" not in final_url.lower()
-            or "/connection/creator/detail" in final_url.lower()
-        ):
+        if not self._is_find_creators_list_url(final_url):
             raise ZiniaoWorkflowError(
                 "第 1 步验收失败：当前页面不是“查找达人”列表页。"
             )
@@ -1265,6 +1263,17 @@ class CreatorContactWorkflow:
                 selected_selector = "DOM_FALLBACK"
                 locator_source = "dom_fallback"
 
+        if element is None and self._visible_find_creators_search_inputs():
+            return {
+                "findCreatorsObstructionPresent": False,
+                "findCreatorsObstructionClosed": True,
+                "findCreatorsObstructionAlreadyClosed": True,
+                "findCreatorsObstructionSelector": "",
+                "findCreatorsObstructionLocatorSource": (
+                    "search_input_visible_after_dom_fallback"
+                ),
+            }
+
         if element is not None and locator_source == "dom_fallback":
             try:
                 if not (element.is_displayed() and element.is_enabled()):
@@ -1354,10 +1363,7 @@ class CreatorContactWorkflow:
         """Step 2: close the obstruction, search the imported ID, and verify."""
         requested_handle, bare_handle = self.normalize_creator_handle(creator)
         current_url = self.driver.current_url
-        if (
-            "/connection/creator" not in current_url.lower()
-            or "/connection/creator/detail" in current_url.lower()
-        ):
+        if not self._is_find_creators_list_url(current_url):
             raise ZiniaoWorkflowError(
                 "第 2 步前置验收失败：当前页面不是“查找达人”列表页。"
             )
@@ -1480,10 +1486,7 @@ class CreatorContactWorkflow:
         """Step 3: click the exact creator result card and verify its detail."""
         requested_handle, bare_handle = self.normalize_creator_handle(creator)
         current_url = self.driver.current_url
-        if (
-            "/connection/creator" not in current_url.lower()
-            or "/connection/creator/detail" in current_url.lower()
-        ):
+        if not self._is_find_creators_list_url(current_url):
             raise ZiniaoWorkflowError(
                 "第 3 步前置验收失败：当前页面不是达人搜索结果页。"
             )
@@ -1513,7 +1516,7 @@ class CreatorContactWorkflow:
         try:
             self._click_and_wait_for_url(
                 result_handle,
-                url_markers=("/connection/creator/detail",),
+                url_markers=CREATOR_DETAIL_PATHS,
                 failure_message="第 3 步失败：点击达人卡片后未进入详情页。",
             )
         except ZiniaoWorkflowError as error:
@@ -1549,7 +1552,7 @@ class CreatorContactWorkflow:
             ),
         )
         final_url = self.driver.current_url
-        if "/connection/creator/detail" not in final_url.lower():
+        if not self._is_creator_detail_url(final_url):
             raise ZiniaoWorkflowError(
                 "第 3 步验收失败：当前 URL 不是达人详情页。"
             )
@@ -1597,7 +1600,7 @@ class CreatorContactWorkflow:
     def open_message_panel(self, creator: str) -> WorkflowStepResult:
         """Step 4: open the creator chat panel without entering a message."""
         _requested_handle, bare_handle = self.normalize_creator_handle(creator)
-        if "/connection/creator/detail" not in self.driver.current_url.lower():
+        if not self._is_creator_detail_url(self.driver.current_url):
             raise ZiniaoWorkflowError(
                 "第 4 步前置验收失败：当前页面不是达人详情页。"
             )
@@ -1929,8 +1932,7 @@ class CreatorContactWorkflow:
         if (
             not search_handle
             or search_handle not in self.driver.window_handles
-            or "/connection/creator" not in search_url.lower()
-            or "/connection/creator/detail" in search_url.lower()
+            or not self._is_find_creators_list_url(search_url)
         ):
             raise ZiniaoWorkflowError(
                 "达人标签清理失败：未找到已验收的“查找达人”标签页。"
@@ -1955,18 +1957,12 @@ class CreatorContactWorkflow:
 
         self.driver.switch_to.window(search_handle)
         current_url = self.driver.current_url
-        if (
-            "/connection/creator" not in current_url.lower()
-            or "/connection/creator/detail" in current_url.lower()
-        ):
+        if not self._is_find_creators_list_url(current_url):
             self._random_pause(5.0, 8.0, refresh=True)
             self.driver.get(search_url)
             self._wait_for_document()
             current_url = self.driver.current_url
-        if (
-            "/connection/creator" not in current_url.lower()
-            or "/connection/creator/detail" in current_url.lower()
-        ):
+        if not self._is_find_creators_list_url(current_url):
             raise ZiniaoWorkflowError(
                 "达人标签清理失败：未能返回“查找达人”列表页。"
             )

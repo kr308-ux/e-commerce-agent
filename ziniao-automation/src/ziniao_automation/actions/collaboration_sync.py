@@ -28,7 +28,7 @@ from ..errors import ZiniaoWorkflowError
 
 
 IN_PROGRESS = "IN_PROGRESS"
-TARGET_INVITATION_PATH = "/connection/target-invitation"
+TARGET_INVITATION_PATH = "/affiliate/collaboration/target-invitation"
 _GROUP_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
@@ -837,7 +837,7 @@ class TargetCollaborationSync:
         raw_candidates: dict[str, WebElement] = {}
         for element in self.driver.find_elements(
             By.CSS_SELECTOR,
-            'a[href*="/connection/target-invitation"]',
+            f'a[href*="{TARGET_INVITATION_PATH}"]',
         ):
             if self._visible(element):
                 raw_candidates[element.id] = element

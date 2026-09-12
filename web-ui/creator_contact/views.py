@@ -670,13 +670,22 @@ def retry_task(
         contact_task.finished_at = None
         contact_task.final_summary = {}
         contact_task.save()
+        # Keep invitation-completed targets in their dedicated card-delivery
+        # state.  Resetting them to PENDING would route them through global
+        # contact deduplication and skip the card phase altogether.
         contact_task.targets.filter(
-            status__in={
-                CreatorContactTarget.Status.FAILED,
-                CreatorContactTarget.Status.INVITATION_COMPLETED,
-            },
+            status=CreatorContactTarget.Status.FAILED,
         ).update(
             status=CreatorContactTarget.Status.PENDING,
+            current_step="",
+            error_code="",
+            error_message="",
+            finished_at=None,
+            updated_at=now,
+        )
+        contact_task.targets.filter(
+            status=CreatorContactTarget.Status.INVITATION_COMPLETED,
+        ).update(
             current_step="",
             error_code="",
             error_message="",
